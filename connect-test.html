@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Connect Stripe - Test Location</title>
+<style>
+  body { font-family: -apple-system, sans-serif; background: #0a0e1a; color: #fff; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
+  .card { background: #131a2c; border: 1px solid #2a3450; border-radius: 12px; padding: 30px; max-width: 400px; width: 100%; text-align: center; }
+  h1 { font-size: 1.3rem; margin-bottom: 10px; }
+  p { color: #9aa5c0; font-size: 0.9rem; margin-bottom: 25px; }
+  button { background: #4f6bff; color: #fff; border: none; border-radius: 8px; padding: 16px 24px; font-size: 1rem; font-weight: bold; width: 100%; cursor: pointer; }
+  button:disabled { opacity: 0.6; }
+  #status { margin-top: 20px; font-size: 0.9rem; word-break: break-word; }
+  .error { color: #ff6b6b; }
+  .success { color: #4ade80; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Connect Stripe Account</h1>
+    <p>Location: TEST<br>This creates a Stripe Express account for Test Location and sends you to onboarding.</p>
+    <button id="btn" onclick="connectStripe()">Connect Test Location</button>
+    <div id="status"></div>
+  </div>
+
+<script>
+async function connectStripe() {
+  const btn = document.getElementById('btn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  btn.textContent = 'Working...';
+  status.textContent = '';
+  status.className = '';
+
+  try {
+    const res = await fetch('/.netlify/functions/aps-connect-onboard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        locationCode: 'TEST',
+        locationName: 'Test Location',
+        email: 'parisispeedsb@gmail.com'
+      })
+    });
+
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch {
+      throw new Error('Server returned non-JSON: ' + text.slice(0, 200));
+    }
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Request failed with status ' + res.status);
+    }
+
+    if (data.url) {
+      status.className = 'success';
+      status.textContent = 'Success! Redirecting to Stripe onboarding...';
+      setTimeout(() => { window.location.href = data.url; }, 800);
+    } else {
+      throw new Error('No onboarding URL returned');
+    }
+  } catch (err) {
+    status.className = 'error';
+    status.textContent = 'Error: ' + err.message;
+    btn.disabled = false;
+    btn.textContent = 'Try Again';
+  }
+}
+</script>
+</body>
+</html>
