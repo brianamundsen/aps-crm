@@ -1,0 +1,4 @@
+[[redirects]]
+  from = "/"
+  to = "/aps-multi.html"
+  status = 200
