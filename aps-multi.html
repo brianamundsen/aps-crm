@@ -986,8 +986,9 @@ function buildAdd(){
     if(t==="Broad Jump"){
       var cur=parseFloat(FORM.results[t]);var curFt="",curIn="";
       if(!isNaN(cur)&&FORM.results[t]!==""){curFt=String(Math.floor(cur/12));curIn=String(Math.round(cur-Math.floor(cur/12)*12));}
-      var ftI=document.createElement("input");ftI.style.cssText=IS;ftI.type="number";ftI.step="1";ftI.min="0";ftI.value=curFt;ftI.placeholder="ft";
-      var inI=document.createElement("input");inI.style.cssText=IS;inI.type="number";inI.step="1";inI.min="0";inI.max="11";inI.value=curIn;inI.placeholder="in";
+      var BJIS=IS+"min-width:0;padding:8px 4px;text-align:center;";
+      var ftI=document.createElement("input");ftI.style.cssText=BJIS;ftI.type="number";ftI.step="1";ftI.min="0";ftI.value=curFt;ftI.placeholder="ft";
+      var inI=document.createElement("input");inI.style.cssText=BJIS;inI.type="number";inI.step="1";inI.min="0";inI.max="11";inI.value=curIn;inI.placeholder="in";
       function syncBJ(){
         var fv=ftI.value.trim(),iv=inI.value.trim();
         if(fv===""&&iv===""){FORM.results[t]="";}
@@ -1001,7 +1002,7 @@ function buildAdd(){
         if(bd2&&bd2.parentNode){var r=FORM.age?getRat(FORM.gender,t,ageGrp(FORM.age),FORM.results[t]):null;var nb=badge(r);bd2.parentNode.replaceChild(nb,bd2);badgeSpans[t]=nb;}
       }
       ftI.addEventListener("input",syncBJ);inI.addEventListener("input",syncBJ);
-      var bjGrid=div("display:grid;grid-template-columns:1fr 1fr;gap:6px");ap(bjGrid,ftI,inI);
+      var bjGrid=div("display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px");ap(bjGrid,ftI,inI);
       ap(row,ap(div(""),lbl("Broad Jump (ft / in)"),bjGrid),bdWrap);rg.appendChild(row);
       return;
     }
@@ -1013,7 +1014,7 @@ function buildAdd(){
   // Chin ups — with reps/sec dropdown
   (function(){
     var cuRow=div("display:grid;grid-template-columns:1fr auto;gap:8px;align-items:flex-end;margin-bottom:8px");
-    var cuInp=document.createElement("input");cuInp.style.cssText=IS;cuInp.type="number";cuInp.step="1";cuInp.value=FORM.results["Chin up Hold"]||"";cuInp.placeholder="0";
+    var cuInp=document.createElement("input");cuInp.style.cssText=IS+"min-width:0;padding:8px 4px;text-align:center;";cuInp.type="number";cuInp.step="1";cuInp.value=FORM.results["Chin up Hold"]||"";cuInp.placeholder="0";
     cuInp.addEventListener("input",function(){FORM.results["Chin up Hold"]=this.value;});
     var cuSel=document.createElement("select");cuSel.style.cssText=IS+"cursor:pointer;width:90px;";
     ["reps","sec"].forEach(function(u){var o=document.createElement("option");o.value=u;o.textContent=u;if((FORM.chinUpUnit||"reps")===u)o.selected=true;cuSel.appendChild(o);});
