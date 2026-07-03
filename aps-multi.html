@@ -73,9 +73,9 @@ async function dbLoadAthletes(){
   if(ADMIN_MODE){
     var locs=await dbLoadAllLocations();
     var locMap={};locs.forEach(function(l){locMap[l.id]=l.name;});
-    return rows.map(function(r){var d=JSON.parse(r.info);d._dbid=r.id;d._locationId=r.location_id;d._locationName=locMap[r.location_id]||"Unknown";return d;});
+    return rows.map(function(r){var d=JSON.parse(r.info);d._dbid=r.id;d._locationId=r.location_id;d._locationName=locMap[r.location_id]||"Unknown";return normAthBJ(d);});
   }
-  return rows.map(function(r){var d=JSON.parse(r.info);d._dbid=r.id;return d;});
+  return rows.map(function(r){var d=JSON.parse(r.info);d._dbid=r.id;return normAthBJ(d);});
 }
 async function dbInsert(athData){
   var rows=await apiPost("aps_athletes",{location_id:LOCATION.id,info:JSON.stringify(athData)});
@@ -106,10 +106,10 @@ var STD=[
   {g:"Boys",t:"Vertical Jump",a:"12-14",d:"H",ex:21,go:19,av:17,ba:14},
   {g:"Boys",t:"Vertical Jump",a:"15-17",d:"H",ex:25,go:23,av:21,ba:19},
   {g:"Boys",t:"Vertical Jump",a:"18-19",d:"H",ex:28,go:27,av:25,ba:23},
-  {g:"Boys",t:"Broad Jump",a:"9-11", d:"H",ex:6.4,go:5.8,av:5.2,ba:4.8},
-  {g:"Boys",t:"Broad Jump",a:"12-14",d:"H",ex:7.2,go:6.8,av:6.2,ba:5.6},
-  {g:"Boys",t:"Broad Jump",a:"15-17",d:"H",ex:8.6,go:7.8,av:7.0,ba:6.0},
-  {g:"Boys",t:"Broad Jump",a:"18-19",d:"H",ex:9.2,go:8.6,av:7.8,ba:6.8},
+  {g:"Boys",t:"Broad Jump",a:"9-11", d:"H",ex:77, go:70, av:62, ba:58 },
+  {g:"Boys",t:"Broad Jump",a:"12-14",d:"H",ex:86, go:82, av:74, ba:67 },
+  {g:"Boys",t:"Broad Jump",a:"15-17",d:"H",ex:103,go:94, av:84, ba:72 },
+  {g:"Boys",t:"Broad Jump",a:"18-19",d:"H",ex:110,go:103,av:94, ba:82 },
   {g:"Boys",t:"5-10-5 Agility",a:"9-11", d:"L",ex:5.2,go:5.6,av:6.1,ba:6.5},
   {g:"Boys",t:"5-10-5 Agility",a:"12-14",d:"L",ex:5,  go:5.3,av:5.8,ba:6.3},
   {g:"Boys",t:"5-10-5 Agility",a:"15-17",d:"L",ex:4.7,go:5,  av:5.4,ba:5.9},
@@ -130,10 +130,10 @@ var STD=[
   {g:"Girls",t:"Vertical Jump",a:"12-14",d:"H",ex:18,go:16,av:14,ba:13},
   {g:"Girls",t:"Vertical Jump",a:"15-17",d:"H",ex:20,go:17,av:15,ba:14},
   {g:"Girls",t:"Vertical Jump",a:"18-19",d:"H",ex:22,go:19,av:17,ba:16},
-  {g:"Girls",t:"Broad Jump",a:"9-11", d:"H",ex:6.4,go:5.8,av:5.2,ba:4.8},
-  {g:"Girls",t:"Broad Jump",a:"12-14",d:"H",ex:7.0,go:6.6,av:5.8,ba:5.0},
-  {g:"Girls",t:"Broad Jump",a:"15-17",d:"H",ex:7.6,go:7.0,av:6.4,ba:5.2},
-  {g:"Girls",t:"Broad Jump",a:"18-19",d:"H",ex:8.0,go:7.2,av:6.6,ba:5.6},
+  {g:"Girls",t:"Broad Jump",a:"9-11", d:"H",ex:77, go:70, av:62, ba:58 },
+  {g:"Girls",t:"Broad Jump",a:"12-14",d:"H",ex:84, go:79, av:70, ba:60 },
+  {g:"Girls",t:"Broad Jump",a:"15-17",d:"H",ex:91, go:84, av:77, ba:62 },
+  {g:"Girls",t:"Broad Jump",a:"18-19",d:"H",ex:96, go:86, av:79, ba:67 },
   {g:"Girls",t:"5-10-5 Agility",a:"9-11", d:"L",ex:5.2,go:5.6,av:6.1,ba:6.5},
   {g:"Girls",t:"5-10-5 Agility",a:"12-14",d:"L",ex:5,  go:5.4,av:5.9,ba:6.3},
   {g:"Girls",t:"5-10-5 Agility",a:"15-17",d:"L",ex:4.9,go:5.3,av:5.8,ba:6.1},
@@ -141,8 +141,11 @@ var STD=[
 ];
 var RATED=["10 yd split","20 yd split","40 yd dash","Vertical Jump","Broad Jump","5-10-5 Agility"];
 var ALL_T=RATED.concat(["Chin up Hold"]);
-var UNITS={"10 yd split":"sec","20 yd split":"sec","40 yd dash":"sec","Vertical Jump":"in","Broad Jump":"ft","5-10-5 Agility":"sec","Chin up Hold":"sec",};
+var UNITS={"10 yd split":"sec","20 yd split":"sec","40 yd dash":"sec","Vertical Jump":"in","Broad Jump":"in","5-10-5 Agility":"sec","Chin up Hold":"sec",};
 function dispName(t){return t==="Chin up Hold"?"Chin ups":t;}
+function fmtVal(t,val){if(t!=="Broad Jump"||val===""||val==null)return val;var v=parseFloat(val);if(isNaN(v))return val;var f=Math.floor(v/12),i=Math.round(v-f*12);if(i===12){f++;i=0;}return f+"\u2032"+i+"\u2033";}
+function normBJ(val){if(val===""||val==null)return val;var v=parseFloat(val);if(isNaN(v))return val;if(v>=15)return val;var parts=String(val).split(".");var ft=parseInt(parts[0])||0;var inch=parts[1]?parseInt(parts[1]):0;if(inch>11)inch=11;return String(ft*12+inch);}
+function normAthBJ(d){if(d.results&&d.results["Broad Jump"])d.results["Broad Jump"]=normBJ(d.results["Broad Jump"]);if(d.evaluations)d.evaluations.forEach(function(ev){if(ev.results&&ev.results["Broad Jump"])ev.results["Broad Jump"]=normBJ(ev.results["Broad Jump"]);});return d;}
 var SHORT=["10yd","20yd","40yd","VJ","BJ","505"];
 var AGS=["9-11","12-14","15-17","18-19"];
 var RC={Excellent:"#22c55e",Good:"#38bdf8",Average:"#f59e0b","Below Avg":"#f87171"};
@@ -163,7 +166,7 @@ function parisiPts(test,value,unit){
   else if(test==="20 yd split") pts=Math.round(166-(v-2.50)/0.01);
   else if(test==="40 yd dash")  pts=Math.round(166-(v-4.50)/0.01);
   else if(test==="Vertical Jump")pts=Math.round(4*v+6);
-  else if(test==="Broad Jump")  pts=Math.round(20*v-74);
+  else if(test==="Broad Jump")  pts=Math.round(v*5/3-74);
   else if(test==="5-10-5 Agility")pts=Math.round(166-(v-4.25)/0.01);
   else if(test==="Chin up Hold"){if(unit!=="reps")return null;pts=Math.round(v*5);max=100;}
   else return null;
@@ -350,7 +353,7 @@ function buildShareView(){
 
   var rg=div("card");rg.className="card";rg.appendChild(ctitle("Test Results"));
   var grid=div("display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-top:6px");
-  RATED.forEach(function(t){var val=disp.results[t],r=getRat(ath.gender,t,ag,val),n=getNrm(ath.gender,t,ag,val),s=getS(ath.gender,t,ag);var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid "+(r?RC[r]+"55":"#2a1818"));var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em",t),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#475569"),val||"—"));if(val)ap(vrow,mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,top,vrow);if(n!==null){var sh=div("display:flex;justify-content:space-between;margin-top:5px;margin-bottom:2px");ap(sh,mk("span","font-size:10px;color:#64748b","Score"),mk("span","font-size:10px;font-weight:700;font-family:'Courier New',monospace;color:"+(RC[r]||"#64748b"),n+"/100"));var pw=div("prog-wrap");pw.className="prog-wrap";var pb=div("prog");pb.className="prog";pb.style.cssText="width:"+Math.min(n,100)+"%;background:"+(RC[r]||"#4a2424");pw.appendChild(pb);ap(card,sh,pw);}if(s)ap(card,mk("p","margin-top:5px;font-size:10px;color:#475569",s.d==="L"?"Ex ≤"+s.ex+" · Gd ≤"+s.go:"Ex ≥"+s.ex+" · Gd ≥"+s.go));grid.appendChild(card);});
+  RATED.forEach(function(t){var val=disp.results[t],r=getRat(ath.gender,t,ag,val),n=getNrm(ath.gender,t,ag,val),s=getS(ath.gender,t,ag);var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid "+(r?RC[r]+"55":"#2a1818"));var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em",t),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#475569"),fmtVal(t,val)||"—"));if(val&&t!=="Broad Jump")ap(vrow,mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,top,vrow);if(n!==null){var sh=div("display:flex;justify-content:space-between;margin-top:5px;margin-bottom:2px");ap(sh,mk("span","font-size:10px;color:#64748b","Score"),mk("span","font-size:10px;font-weight:700;font-family:'Courier New',monospace;color:"+(RC[r]||"#64748b"),n+"/100"));var pw=div("prog-wrap");pw.className="prog-wrap";var pb=div("prog");pb.className="prog";pb.style.cssText="width:"+Math.min(n,100)+"%;background:"+(RC[r]||"#4a2424");pw.appendChild(pb);ap(card,sh,pw);}if(s)ap(card,mk("p","margin-top:5px;font-size:10px;color:#475569",s.d==="L"?"Ex ≤"+s.ex+" · Gd ≤"+s.go:"Ex ≥"+fmtVal(t,s.ex)+" · Gd ≥"+fmtVal(t,s.go)));grid.appendChild(card);});
   ["Chin up Hold"].forEach(function(t){var val=disp.results[t];if(!val)return;var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid #1a2d50");if(t==="Chin up Hold"){var unit=disp.chinUpUnit||ath.chinUpUnit||"sec";var r=getChinUpRat(ath.gender,val,unit);card.style.borderColor=r?RC[r]+"55":"#2a1818";var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em","Chin ups"),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#64748b"),val),mk("span","font-size:11px;color:#64748b",unit));ap(card,top,vrow);if(r){var sh=div("display:flex;justify-content:space-between;margin-top:5px");ap(sh,mk("span","font-size:10px;color:#64748b",unit==="sec"?"Any time = Below Avg":"Ex ≥16 (Boys) / ≥8 (Girls)"));card.appendChild(sh);}}else{var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:#64748b",val),mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px",dispName(t)),vrow);}grid.appendChild(card);});
   rg.appendChild(grid);body.appendChild(rg);
 
@@ -675,7 +678,7 @@ function buildScore(){
           var bw=div("background:#1a2d50;border-radius:99px;height:4px;overflow:hidden");
           var bb=div("height:100%;border-radius:99px;background:#dc2626");bb.style.width=pctRow+"%";bw.appendChild(bb);
           rrow.appendChild(bw);
-          if(row.val)rrow.appendChild(mk("div","font-size:11px;color:#64748b;margin-top:3px","Result: "+row.val+(row.unit?" "+row.unit:"")));
+          if(row.val)rrow.appendChild(mk("div","font-size:11px;color:#64748b;margin-top:3px","Result: "+fmtVal(row.t,row.val)+(row.unit?" "+row.unit:(row.t==="Broad Jump"?"":" "+(UNITS[row.t]||"")))));
         }else{
           rrow.appendChild(mk("div","font-size:11px;color:#475569","No result recorded"));
         }
@@ -845,7 +848,7 @@ function buildRoster(){
     }
     var rg=div("card");rg.className="card";rg.appendChild(ctitle("Test Results"));
     var grid=div("display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-top:6px");
-    RATED.forEach(function(t){var val=disp.results[t],r=getRat(ath.gender,t,ag,val),n=getNrm(ath.gender,t,ag,val),s=getS(ath.gender,t,ag);var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid "+(r?RC[r]+"55":"#2a1818"));var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em",t),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#475569"),val||"—"));if(val)ap(vrow,mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,top,vrow);if(n!==null){var sh=div("display:flex;justify-content:space-between;margin-top:5px;margin-bottom:2px");ap(sh,mk("span","font-size:10px;color:#64748b","Score"),mk("span","font-size:10px;font-weight:700;font-family:'Courier New',monospace;color:"+(RC[r]||"#64748b"),n+"/100"));var pw=div("prog-wrap");pw.className="prog-wrap";var pb=div("prog");pb.className="prog";pb.style.cssText="width:"+Math.min(n,100)+"%;background:"+(RC[r]||"#4a2424");pw.appendChild(pb);ap(card,sh,pw);}if(s)ap(card,mk("p","margin-top:5px;font-size:10px;color:#475569",s.d==="L"?"Ex ≤"+s.ex+" · Gd ≤"+s.go:"Ex ≥"+s.ex+" · Gd ≥"+s.go));grid.appendChild(card);});
+    RATED.forEach(function(t){var val=disp.results[t],r=getRat(ath.gender,t,ag,val),n=getNrm(ath.gender,t,ag,val),s=getS(ath.gender,t,ag);var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid "+(r?RC[r]+"55":"#2a1818"));var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em",t),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#475569"),fmtVal(t,val)||"—"));if(val&&t!=="Broad Jump")ap(vrow,mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,top,vrow);if(n!==null){var sh=div("display:flex;justify-content:space-between;margin-top:5px;margin-bottom:2px");ap(sh,mk("span","font-size:10px;color:#64748b","Score"),mk("span","font-size:10px;font-weight:700;font-family:'Courier New',monospace;color:"+(RC[r]||"#64748b"),n+"/100"));var pw=div("prog-wrap");pw.className="prog-wrap";var pb=div("prog");pb.className="prog";pb.style.cssText="width:"+Math.min(n,100)+"%;background:"+(RC[r]||"#4a2424");pw.appendChild(pb);ap(card,sh,pw);}if(s)ap(card,mk("p","margin-top:5px;font-size:10px;color:#475569",s.d==="L"?"Ex ≤"+s.ex+" · Gd ≤"+s.go:"Ex ≥"+fmtVal(t,s.ex)+" · Gd ≥"+fmtVal(t,s.go)));grid.appendChild(card);});
     ["Chin up Hold"].forEach(function(t){var val=disp.results[t];if(!val)return;var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid #1a2d50");if(t==="Chin up Hold"){var unit=disp.chinUpUnit||ath.chinUpUnit||"sec";var r=getChinUpRat(ath.gender,val,unit);card.style.borderColor=r?RC[r]+"55":"#2a1818";var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em","Chin ups"),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#64748b"),val),mk("span","font-size:11px;color:#64748b",unit));ap(card,top,vrow);if(r){var sh=div("display:flex;justify-content:space-between;margin-top:5px");ap(sh,mk("span","font-size:10px;color:#64748b",unit==="sec"?"Any time = Below Avg":"Ex ≥16 (Boys) / ≥8 (Girls)"));card.appendChild(sh);}}else{var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:#64748b",val),mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px",dispName(t)),vrow);}grid.appendChild(card);});
     rg.appendChild(grid);detail.appendChild(rg);
     if(disp.notes||disp.goals){var nr=div("display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px");if(disp.notes){var nc=div("card");nc.className="card";ap(nc,ctitle("Coach Observations"),mk("p","color:#94a3b8;font-size:13px;line-height:1.7",disp.notes));nr.appendChild(nc);}if(disp.goals){var gc=div("card");gc.className="card";ap(gc,ctitle("Athlete Goals"),mk("p","color:#94a3b8;font-size:13px;line-height:1.7",disp.goals));nr.appendChild(gc);}detail.appendChild(nr);}
@@ -908,7 +911,7 @@ function buildRoster(){
   }
 }
 
-function updateStdBar(ath,ag,area){if(!area)return;area.innerHTML="";var s=getS(ath.gender,S.sTest,ag);if(!s)return;area.appendChild(barChart([s.ex,s.go,s.av,s.ba],["Excellent","Good","Avg","Below Avg"],["#22c55e","#38bdf8","#f59e0b","#f87171"],310,135));var v=parseFloat(ath.results[S.sTest]);if(!isNaN(v)&&ath.results[S.sTest]!==""){var r=getRat(ath.gender,S.sTest,ag,ath.results[S.sTest]);var rp=mk("p","margin-top:6px;font-size:11px;color:#94a3b8;text-align:center","Your result: ");var vs=mk("span","font-family:'Courier New',monospace;color:"+(RC[r]||"#fff"),v+" "+UNITS[S.sTest]);ap(rp,vs,document.createTextNode(" → "),badge(r));area.appendChild(rp);}}
+function updateStdBar(ath,ag,area){if(!area)return;area.innerHTML="";var s=getS(ath.gender,S.sTest,ag);if(!s)return;area.appendChild(barChart([s.ex,s.go,s.av,s.ba],["Excellent","Good","Avg","Below Avg"],["#22c55e","#38bdf8","#f59e0b","#f87171"],310,135));var v=parseFloat(ath.results[S.sTest]);if(!isNaN(v)&&ath.results[S.sTest]!==""){var r=getRat(ath.gender,S.sTest,ag,ath.results[S.sTest]);var rp=mk("p","margin-top:6px;font-size:11px;color:#94a3b8;text-align:center","Your result: ");var vs=mk("span","font-family:'Courier New',monospace;color:"+(RC[r]||"#fff"),fmtVal(S.sTest,v)+(S.sTest==="Broad Jump"?"":" "+UNITS[S.sTest]));ap(rp,vs,document.createTextNode(" → "),badge(r));area.appendChild(rp);}}
 
 /* ── ANALYTICS ── */
 function buildAnalytics(){
@@ -944,7 +947,7 @@ function refreshAnalytics(){
   [["Gender","#64748b"],["Age","#64748b"],["Excellent","#22c55e"],["Good","#38bdf8"],["Average","#f59e0b"],["Below Avg","#f87171"],["Unit","#64748b"]].forEach(function(h){var th=document.createElement("th");th.style.color=h[1];th.textContent=h[0];hr.appendChild(th);});
   thead.appendChild(hr);tbl.appendChild(thead);
   var tbody=document.createElement("tbody");
-  ["Boys","Girls"].forEach(function(g){AGS.forEach(function(ag){var s=getS(g,S.aTest,ag);if(!s)return;var row=document.createElement("tr");[[g,GB[g]],[ag,"#94a3b8"],[s.ex,"#22c55e"],[s.go,"#38bdf8"],[s.av,"#f59e0b"],[s.ba,"#f87171"],[UNITS[S.aTest],"#64748b"]].forEach(function(cell,i){var td=document.createElement("td");td.style.color=cell[1];if(i>=2&&i<=5)td.style.fontFamily="'Courier New',monospace";td.textContent=cell[0];row.appendChild(td);});tbody.appendChild(row);});});
+  ["Boys","Girls"].forEach(function(g){AGS.forEach(function(ag){var s=getS(g,S.aTest,ag);if(!s)return;var row=document.createElement("tr");[[g,GB[g]],[ag,"#94a3b8"],[fmtVal(S.aTest,s.ex),"#22c55e"],[fmtVal(S.aTest,s.go),"#38bdf8"],[fmtVal(S.aTest,s.av),"#f59e0b"],[fmtVal(S.aTest,s.ba),"#f87171"],[S.aTest==="Broad Jump"?"ft/in":UNITS[S.aTest],"#64748b"]].forEach(function(cell,i){var td=document.createElement("td");td.style.color=cell[1];if(i>=2&&i<=5)td.style.fontFamily="'Courier New',monospace";td.textContent=cell[0];row.appendChild(td);});tbody.appendChild(row);});});
   tbl.appendChild(tbody);sc.appendChild(tbl);
 }
 
@@ -980,6 +983,28 @@ function buildAdd(){
     var initR=FORM.age?getRat(FORM.gender,t,ageGrp(FORM.age),FORM.results[t]):null;
     var bd=badge(initR);badgeSpans[t]=bd;
     var bdWrap=div("display:flex;align-items:center;padding-bottom:2px");bdWrap.appendChild(bd);
+    if(t==="Broad Jump"){
+      var cur=parseFloat(FORM.results[t]);var curFt="",curIn="";
+      if(!isNaN(cur)&&FORM.results[t]!==""){curFt=String(Math.floor(cur/12));curIn=String(Math.round(cur-Math.floor(cur/12)*12));}
+      var ftI=document.createElement("input");ftI.style.cssText=IS;ftI.type="number";ftI.step="1";ftI.min="0";ftI.value=curFt;ftI.placeholder="ft";
+      var inI=document.createElement("input");inI.style.cssText=IS;inI.type="number";inI.step="1";inI.min="0";inI.max="11";inI.value=curIn;inI.placeholder="in";
+      function syncBJ(){
+        var fv=ftI.value.trim(),iv=inI.value.trim();
+        if(fv===""&&iv===""){FORM.results[t]="";}
+        else{
+          var f=parseInt(fv)||0;var n=parseInt(iv)||0;
+          if(n>11){n=11;inI.value="11";}
+          if(n<0){n=0;inI.value="0";}
+          FORM.results[t]=String(f*12+n);
+        }
+        var bd2=badgeSpans[t];
+        if(bd2&&bd2.parentNode){var r=FORM.age?getRat(FORM.gender,t,ageGrp(FORM.age),FORM.results[t]):null;var nb=badge(r);bd2.parentNode.replaceChild(nb,bd2);badgeSpans[t]=nb;}
+      }
+      ftI.addEventListener("input",syncBJ);inI.addEventListener("input",syncBJ);
+      var bjGrid=div("display:grid;grid-template-columns:1fr 1fr;gap:6px");ap(bjGrid,ftI,inI);
+      ap(row,ap(div(""),lbl("Broad Jump (ft / in)"),bjGrid),bdWrap);rg.appendChild(row);
+      return;
+    }
     var i=document.createElement("input");i.style.cssText=IS;i.type="number";i.step="0.001";i.value=FORM.results[t]||"";i.placeholder=UNITS[t];
     i.addEventListener("input",function(){FORM.results[t]=this.value;var bd=badgeSpans[t];if(bd&&bd.parentNode){var r=FORM.age?getRat(FORM.gender,t,ageGrp(FORM.age),this.value):null;var nb=badge(r);bd.parentNode.replaceChild(nb,bd);badgeSpans[t]=nb;}});
     ap(row,ap(div(""),lbl(t+" ("+UNITS[t]+")"),i),bdWrap);rg.appendChild(row);
