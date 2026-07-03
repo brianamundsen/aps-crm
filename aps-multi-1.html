@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Athlete Performance Score — Athlete Tracker</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#060c18;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;height:100vh;overflow:hidden;font-size:14px}
+::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:#0f172a}::-webkit-scrollbar-thumb{background:#1e3a6b;border-radius:3px}
+input,select,textarea,button{font-family:inherit;font-size:13px;color:#e2e8f0}
+input::placeholder,textarea::placeholder{color:#475569}
+.inp{width:100%;background:#080f1e;border:1px solid #1e3a6b;border-radius:8px;padding:8px 11px;outline:none}
+.card{background:#0d0d0d;border:1px solid #1e3a6b;border-radius:12px;padding:16px 18px}
+.ctitle{font-size:12px;font-weight:800;color:#f87171;letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px}
+.lbl{font-size:10px;color:#64748b;font-weight:700;letter-spacing:.07em;text-transform:uppercase;margin-bottom:3px}
+.btn-p{background:linear-gradient(135deg,#1d4ed8,#1e40af);border:none;border-radius:9px;padding:11px 26px;color:#fff;font-size:14px;font-weight:800;cursor:pointer}
+.btn-g{background:transparent;border:1px solid #243d73;border-radius:9px;padding:11px 22px;color:#94a3b8;font-size:14px;font-weight:600;cursor:pointer}
+.tab-btn{background:none;border:none;padding:11px 18px;font-weight:700;cursor:pointer;color:#64748b;border-bottom:2px solid transparent;font-size:13px;letter-spacing:.04em}
+.tab-btn.active{color:#f87171;border-bottom-color:#f87171}
+.si{padding:13px 15px;border-bottom:1px solid #1a2535;cursor:pointer;border-left:3px solid transparent}
+.si:hover{background:#0f1a2e}
+.si.sel{background:#132040;border-left-color:#f87171}
+.prog-wrap{background:#1a2d50;border-radius:99px;height:5px;overflow:hidden;margin-top:5px}
+.prog{height:100%;border-radius:99px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{padding:7px 11px;text-align:left;font-weight:700;font-size:10px;letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid #1a2d50}
+td{padding:7px 11px;border-bottom:1px solid #1a2535}
+#toast{position:fixed;bottom:20px;right:20px;padding:10px 18px;border-radius:9px;font-size:13px;font-weight:700;z-index:999;display:none}
+</style>
+</head>
+<body>
+<div id="app" style="height:100vh;display:flex;flex-direction:column"></div>
+<div id="toast"></div>
+<script>
+"use strict";
+
+var SB_URL="https://nghfnuhssyknbjagldxh.supabase.co";
+var SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5naGZudWhzc3lrbmJqYWdsZHhoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNDc0ODYsImV4cCI6MjA5NjYyMzQ4Nn0.OR40jInOS9VxFtLTK9vHYyFhuJVGwnUoYC60zEJI0CQ";
+var HDRS={"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json","Prefer":"return=representation"};
+
+function toast(msg,ok){var t=document.getElementById("toast");t.textContent=msg;t.style.cssText="position:fixed;bottom:20px;right:20px;padding:10px 18px;border-radius:9px;font-size:13px;font-weight:700;z-index:999;display:block;background:"+(ok!==false?"rgba(34,197,94,.15)":"rgba(248,113,113,.15)")+";border:1px solid "+(ok!==false?"#22c55e":"#f87171")+";color:"+(ok!==false?"#22c55e":"#f87171");clearTimeout(t._t);t._t=setTimeout(function(){t.style.display="none";},3000);}
+
+/* ── URL params ── */
+var params=new URLSearchParams(window.location.search);
+var LOCATION_CODE=(params.get("location")||"").toUpperCase().trim();
+var SHARE_ID=params.get("athlete")?parseInt(params.get("athlete")):null;
+var LOCATION={id:null,name:"",code:""};
+var ADMIN_MODE=false;
+var ADMIN_READONLY=false;
+var ADMIN_PASSWORD="Amundsen2026";
+var S_LOC_FILTER=null;
+
+/* ── DB ── */
+async function apiGet(path){var r=await fetch(SB_URL+"/rest/v1/"+path,{headers:HDRS});var t=await r.text();if(!r.ok)throw new Error("HTTP "+r.status+" "+t);return JSON.parse(t);}
+async function apiPost(table,body){var r=await fetch(SB_URL+"/rest/v1/"+table,{method:"POST",headers:HDRS,body:JSON.stringify(body)});var t=await r.text();if(!r.ok)throw new Error("HTTP "+r.status+" "+t);return JSON.parse(t);}
+async function apiDelete(table,filter){var r=await fetch(SB_URL+"/rest/v1/"+table+"?"+filter,{method:"DELETE",headers:HDRS});if(!r.ok){var t=await r.text();throw new Error("HTTP "+r.status+" "+t);}}
+
+async function loadLocation(){
+  var rows=await apiGet("aps_locations?code=eq."+LOCATION_CODE+"&select=*");
+  if(!rows.length)return false;
+  LOCATION=rows[0];return true;
+}
+async function createLocation(name,code,password){
+  var rows=await apiPost("aps_locations",{name:name,code:code.toUpperCase(),password:password||""});
+  LOCATION=rows[0];return LOCATION;
+}
+async function dbLoadAllLocations(){return await apiGet("aps_locations?select=*&order=id.asc");}
+
+async function dbLoadAthletes(){
+  var path=ADMIN_MODE?"aps_athletes?select=*&order=id.asc":"aps_athletes?location_id=eq."+LOCATION.id+"&select=*&order=id.asc";
+  var rows=await apiGet(path);
+  if(ADMIN_MODE){
+    var locs=await dbLoadAllLocations();
+    var locMap={};locs.forEach(function(l){locMap[l.id]=l.name;});
+    return rows.map(function(r){var d=JSON.parse(r.info);d._dbid=r.id;d._locationId=r.location_id;d._locationName=locMap[r.location_id]||"Unknown";return normAthBJ(d);});
+  }
+  return rows.map(function(r){var d=JSON.parse(r.info);d._dbid=r.id;return normAthBJ(d);});
+}
+async function dbInsert(athData){
+  var rows=await apiPost("aps_athletes",{location_id:LOCATION.id,info:JSON.stringify(athData)});
+  var d=JSON.parse(rows[0].info);d._dbid=rows[0].id;return d;
+}
+async function dbUpdate(id,athData){
+  var r=await fetch(SB_URL+"/rest/v1/aps_athletes?id=eq."+id,{method:"PATCH",headers:HDRS,body:JSON.stringify({info:JSON.stringify(athData)})});
+  var t=await r.text();if(!r.ok)throw new Error("HTTP "+r.status+" "+t);
+  var rows=JSON.parse(t);var d=JSON.parse(rows[0].info);d._dbid=rows[0].id;return d;
+}
+async function dbDelete(id){await apiDelete("aps_athletes","id=eq."+id);}
+
+/* ── STANDARDS ── */
+var STD=[
+  {g:"Boys",t:"10 yd split",a:"9-11", d:"L",ex:2.1, go:2.15,av:2.2, ba:2.3 },
+  {g:"Boys",t:"10 yd split",a:"12-14",d:"L",ex:1.95,go:2,   av:2.05,ba:2.15},
+  {g:"Boys",t:"10 yd split",a:"15-17",d:"L",ex:1.85,go:1.9, av:1.95,ba:2.1 },
+  {g:"Boys",t:"10 yd split",a:"18-19",d:"L",ex:1.75,go:1.85,av:1.9, ba:2.05},
+  {g:"Boys",t:"20 yd split",a:"9-11", d:"L",ex:3.5, go:3.6, av:3.8, ba:4.1 },
+  {g:"Boys",t:"20 yd split",a:"12-14",d:"L",ex:3.15,go:3.3, av:3.5, ba:3.8 },
+  {g:"Boys",t:"20 yd split",a:"15-17",d:"L",ex:3.05,go:3.15,av:3.35,ba:3.7 },
+  {g:"Boys",t:"20 yd split",a:"18-19",d:"L",ex:2.95,go:3.1, av:3.3, ba:3.6 },
+  {g:"Boys",t:"40 yd dash", a:"9-11", d:"L",ex:5.8, go:6.2, av:6.6, ba:7   },
+  {g:"Boys",t:"40 yd dash", a:"12-14",d:"L",ex:5.3, go:5.6, av:5.9, ba:6.3 },
+  {g:"Boys",t:"40 yd dash", a:"15-17",d:"L",ex:4.8, go:5.2, av:5.6, ba:6   },
+  {g:"Boys",t:"40 yd dash", a:"18-19",d:"L",ex:4.7, go:5,   av:5.3, ba:5.6 },
+  {g:"Boys",t:"Vertical Jump",a:"9-11", d:"H",ex:16,go:15,av:13,ba:11},
+  {g:"Boys",t:"Vertical Jump",a:"12-14",d:"H",ex:21,go:19,av:17,ba:14},
+  {g:"Boys",t:"Vertical Jump",a:"15-17",d:"H",ex:25,go:23,av:21,ba:19},
+  {g:"Boys",t:"Vertical Jump",a:"18-19",d:"H",ex:28,go:27,av:25,ba:23},
+  {g:"Boys",t:"Broad Jump",a:"9-11", d:"H",ex:77, go:70, av:62, ba:58 },
+  {g:"Boys",t:"Broad Jump",a:"12-14",d:"H",ex:86, go:82, av:74, ba:67 },
+  {g:"Boys",t:"Broad Jump",a:"15-17",d:"H",ex:103,go:94, av:84, ba:72 },
+  {g:"Boys",t:"Broad Jump",a:"18-19",d:"H",ex:110,go:103,av:94, ba:82 },
+  {g:"Boys",t:"5-10-5 Agility",a:"9-11", d:"L",ex:5.2,go:5.6,av:6.1,ba:6.5},
+  {g:"Boys",t:"5-10-5 Agility",a:"12-14",d:"L",ex:5,  go:5.3,av:5.8,ba:6.3},
+  {g:"Boys",t:"5-10-5 Agility",a:"15-17",d:"L",ex:4.7,go:5,  av:5.4,ba:5.9},
+  {g:"Boys",t:"5-10-5 Agility",a:"18-19",d:"L",ex:4.5,go:4.8,av:5.2,ba:5.5},
+  {g:"Girls",t:"10 yd split",a:"9-11", d:"L",ex:2.1, go:2.15,av:2.2, ba:2.35},
+  {g:"Girls",t:"10 yd split",a:"12-14",d:"L",ex:1.98,go:2,   av:2.05,ba:2.2 },
+  {g:"Girls",t:"10 yd split",a:"15-17",d:"L",ex:1.9, go:1.95,av:2,   ba:2.15},
+  {g:"Girls",t:"10 yd split",a:"18-19",d:"L",ex:1.85,go:1.9, av:1.95,ba:2.1 },
+  {g:"Girls",t:"20 yd split",a:"9-11", d:"L",ex:3.5, go:3.6, av:3.8, ba:4.1 },
+  {g:"Girls",t:"20 yd split",a:"12-14",d:"L",ex:3.3, go:3.4, av:3.6, ba:3.8 },
+  {g:"Girls",t:"20 yd split",a:"15-17",d:"L",ex:3.2, go:3.3, av:3.5, ba:3.7 },
+  {g:"Girls",t:"20 yd split",a:"18-19",d:"L",ex:3.1, go:3.2, av:3.4, ba:3.7 },
+  {g:"Girls",t:"40 yd dash", a:"9-11", d:"L",ex:5.8,go:6.2,av:6.6,ba:7  },
+  {g:"Girls",t:"40 yd dash", a:"12-14",d:"L",ex:5.5,go:5.9,av:6.3,ba:6.7},
+  {g:"Girls",t:"40 yd dash", a:"15-17",d:"L",ex:5.4,go:5.7,av:6.2,ba:6.6},
+  {g:"Girls",t:"40 yd dash", a:"18-19",d:"L",ex:5.3,go:5.6,av:6.1,ba:6.5},
+  {g:"Girls",t:"Vertical Jump",a:"9-11", d:"H",ex:16,go:15,av:13,ba:11},
+  {g:"Girls",t:"Vertical Jump",a:"12-14",d:"H",ex:18,go:16,av:14,ba:13},
+  {g:"Girls",t:"Vertical Jump",a:"15-17",d:"H",ex:20,go:17,av:15,ba:14},
+  {g:"Girls",t:"Vertical Jump",a:"18-19",d:"H",ex:22,go:19,av:17,ba:16},
+  {g:"Girls",t:"Broad Jump",a:"9-11", d:"H",ex:77, go:70, av:62, ba:58 },
+  {g:"Girls",t:"Broad Jump",a:"12-14",d:"H",ex:84, go:79, av:70, ba:60 },
+  {g:"Girls",t:"Broad Jump",a:"15-17",d:"H",ex:91, go:84, av:77, ba:62 },
+  {g:"Girls",t:"Broad Jump",a:"18-19",d:"H",ex:96, go:86, av:79, ba:67 },
+  {g:"Girls",t:"5-10-5 Agility",a:"9-11", d:"L",ex:5.2,go:5.6,av:6.1,ba:6.5},
+  {g:"Girls",t:"5-10-5 Agility",a:"12-14",d:"L",ex:5,  go:5.4,av:5.9,ba:6.3},
+  {g:"Girls",t:"5-10-5 Agility",a:"15-17",d:"L",ex:4.9,go:5.3,av:5.8,ba:6.1},
+  {g:"Girls",t:"5-10-5 Agility",a:"18-19",d:"L",ex:4.7,go:5,  av:5.4,ba:5.9},
+];
+var RATED=["10 yd split","20 yd split","40 yd dash","Vertical Jump","Broad Jump","5-10-5 Agility"];
+var ALL_T=RATED.concat(["Chin up Hold"]);
+var UNITS={"10 yd split":"sec","20 yd split":"sec","40 yd dash":"sec","Vertical Jump":"in","Broad Jump":"in","5-10-5 Agility":"sec","Chin up Hold":"sec",};
+function dispName(t){return t==="Chin up Hold"?"Chin ups":t;}
+function fmtVal(t,val){if(t!=="Broad Jump"||val===""||val==null)return val;var v=parseFloat(val);if(isNaN(v))return val;var f=Math.floor(v/12),i=Math.round(v-f*12);if(i===12){f++;i=0;}return f+"\u2032"+i+"\u2033";}
+function normBJ(val){if(val===""||val==null)return val;var v=parseFloat(val);if(isNaN(v))return val;if(v>=15)return val;var parts=String(val).split(".");var ft=parseInt(parts[0])||0;var inch=parts[1]?parseInt(parts[1]):0;if(inch>11)inch=11;return String(ft*12+inch);}
+function normAthBJ(d){if(d.results&&d.results["Broad Jump"])d.results["Broad Jump"]=normBJ(d.results["Broad Jump"]);if(d.evaluations)d.evaluations.forEach(function(ev){if(ev.results&&ev.results["Broad Jump"])ev.results["Broad Jump"]=normBJ(ev.results["Broad Jump"]);});return d;}
+var SHORT=["10yd","20yd","40yd","VJ","BJ","505"];
+var AGS=["9-11","12-14","15-17","18-19"];
+var RC={Excellent:"#22c55e",Good:"#38bdf8",Average:"#f59e0b","Below Avg":"#f87171"};
+var RB={Elite:"rgba(245,158,11,.2)",Excellent:"rgba(34,197,94,.15)",Good:"rgba(56,189,248,.15)",Average:"rgba(245,158,11,.15)","Below Avg":"rgba(248,113,113,.15)"};
+var GB={Boys:"#818cf8",Girls:"#f472b6"};
+
+function ageGrp(age){var n=parseInt(age);if(n<=11)return"9-11";if(n<=14)return"12-14";if(n<=17)return"15-17";return"18-19";}
+function getS(g,t,a){for(var i=0;i<STD.length;i++){if(STD[i].g===g&&STD[i].t===t&&STD[i].a===a)return STD[i];}return null;}
+function getRat(g,t,a,val){var s=getS(g,t,a);if(!s||val===""||val==null)return null;var v=parseFloat(val);if(isNaN(v))return null;if(s.d==="L"){var el=parseFloat((s.ex*0.93).toFixed(2));if(v<=el)return"Elite";if(v<=s.ex)return"Excellent";if(v<=s.go)return"Good";if(v<=s.av)return"Average";return"Below Avg";}else{var el=parseFloat((s.ex*1.18).toFixed(1));if(v>=el)return"Elite";if(v>=s.ex)return"Excellent";if(v>=s.go)return"Good";if(v>=s.av)return"Average";return"Below Avg";}}
+function getNrm(g,t,a,val){var s=getS(g,t,a);if(!s||val===""||val==null)return null;var v=parseFloat(val);if(isNaN(v))return null;var sc=s.d==="L"?100*(s.ba-v)/(s.ba-s.ex):100*(v-s.ba)/(s.ex-s.ba);return Math.max(0,Math.min(110,Math.round(sc)));}
+var CHINUP_STD={Boys:{ex:16,go:9,av:3},Girls:{ex:8,go:5,av:2}};
+function getChinUpRat(g,val,unit){if(val===""||val==null||val===undefined)return null;var v=parseFloat(val);if(isNaN(v))return null;if(unit==="sec")return"Below Avg";var s=CHINUP_STD[g];if(!s)return null;if(g==="Boys"&&v>=22)return"Elite";if(g==="Girls"&&v>=11)return"Elite";if(v>=s.ex)return"Excellent";if(v>=s.go)return"Good";if(v>=s.av)return"Average";return"Below Avg";}
+function parisiPts(test,value,unit){
+  if(value===""||value===null||value===undefined)return null;
+  var v=parseFloat(value);if(isNaN(v))return null;
+  var pts,max=166;
+  if(test==="10 yd split")      pts=Math.round(166-(v-1.45)/0.01);
+  else if(test==="20 yd split") pts=Math.round(166-(v-2.50)/0.01);
+  else if(test==="40 yd dash")  pts=Math.round(166-(v-4.50)/0.01);
+  else if(test==="Vertical Jump")pts=Math.round(4*v+6);
+  else if(test==="Broad Jump")  pts=Math.round(v*5/3-74);
+  else if(test==="5-10-5 Agility")pts=Math.round(166-(v-4.25)/0.01);
+  else if(test==="Chin up Hold"){if(unit!=="reps")return null;pts=Math.round(v*5);max=100;}
+  else return null;
+  return Math.max(2,Math.min(pts,max));
+}
+var APS_SCORE_TESTS=["10 yd split","20 yd split","Vertical Jump","Broad Jump","5-10-5 Agility"];
+var APS_MAX=166*5+100; // 930
+
+function getCatLevel(pts,age){
+  var a=parseInt(age)||0;
+  if(a<=12){
+    if(pts>=547)return{name:"Elite",color:"#f59e0b",border:"rgba(245,158,11,.6)",bg:"rgba(245,158,11,.12)",emoji:"⭐"};
+    if(pts>=486)return{name:"All-American",color:"#e11d48",border:"rgba(225,29,72,.5)",bg:"rgba(225,29,72,.12)",emoji:"🏆"};
+    if(pts>=425)return{name:"National",color:"#dc2626",border:"rgba(220,38,38,.5)",bg:"rgba(220,38,38,.12)",emoji:"🌟"};
+    if(pts>=364)return{name:"Regional",color:"#2563eb",border:"rgba(37,99,235,.5)",bg:"rgba(37,99,235,.12)",emoji:"💫"};
+    if(pts>=303)return{name:"Varsity",color:"#3b82f6",border:"rgba(59,130,246,.5)",bg:"rgba(59,130,246,.12)",emoji:"🔵"};
+    if(pts>=242)return{name:"Competitor",color:"#60a5fa",border:"rgba(96,165,250,.5)",bg:"rgba(96,165,250,.12)",emoji:"⚡"};
+    if(pts>=181)return{name:"Challenger",color:"#94a3b8",border:"rgba(148,163,184,.5)",bg:"rgba(148,163,184,.12)",emoji:"🎯"};
+    return{name:"Starter",color:"#64748b",border:"rgba(100,116,139,.5)",bg:"rgba(100,116,139,.12)",emoji:"🏁"};
+  }else{
+    if(pts>=798)return{name:"Elite",color:"#f59e0b",border:"rgba(245,158,11,.6)",bg:"rgba(245,158,11,.15)",emoji:"⭐"};
+    if(pts>=697)return{name:"Premier",color:"#dc2626",border:"rgba(220,38,38,.5)",bg:"rgba(220,38,38,.12)",emoji:"🔴"};
+    if(pts>=576)return{name:"Varsity",color:"#2563eb",border:"rgba(37,99,235,.5)",bg:"rgba(37,99,235,.12)",emoji:"🔵"};
+    if(pts>=425)return{name:"Competitor",color:"#22c55e",border:"rgba(34,197,94,.5)",bg:"rgba(34,197,94,.12)",emoji:"🟢"};
+    return{name:"Starter",color:"#94a3b8",border:"rgba(148,163,184,.5)",bg:"rgba(148,163,184,.12)",emoji:"⚪"};
+  }
+}
+
+
+function getParisiTotal(ath,disp){
+  var total=0,rows=[];
+  var unit=disp.chinUpUnit||ath.chinUpUnit||"reps";
+  APS_SCORE_TESTS.forEach(function(t){
+    var p=parisiPts(t,disp.results[t]);
+    rows.push({t:t,val:disp.results[t],pts:p});
+    if(p!==null)total+=p;
+  });
+  var cuVal=disp.results["Chin up Hold"],cuPts=parisiPts("Chin up Hold",cuVal,unit);
+  rows.push({t:"Chin up Hold",val:cuVal,pts:cuPts,unit:unit});
+  if(cuPts!==null)total+=cuPts;
+  return{total:total,rows:rows};
+}
+function blankR(){var r={};ALL_T.forEach(function(t){r[t]="";});return r;}
+
+/* ── STATE ── */
+var S={athletes:[],tab:"roster",selId:null,sTest:"40 yd dash",aTest:"40 yd dash",aGen:"All",loading:true,saving:false,viewEvalIdx:null,screen:"loading"};
+var FORM={name:"",age:"",gender:"Boys",height:"",weight:"",date:"",program:"",notes:"",goals:"",results:blankR(),_mode:"new",_editId:null};
+function clearForm(){FORM.name="";FORM.age="";FORM.gender="Boys";FORM.height="";FORM.weight="";FORM.date="";FORM.program="";FORM.notes="";FORM.goals="";FORM.results=blankR();FORM._mode="new";FORM._editId=null;FORM.chinUpUnit="reps";}
+function ensureEvaluations(ath){
+  if(!ath.evaluations||!ath.evaluations.length){
+    ath.evaluations=[{date:ath.date||"",height:ath.height||"",weight:ath.weight||"",results:ath.results||blankR(),notes:ath.notes||"",goals:ath.goals||""}];
+  }
+  return ath.evaluations;
+}
+function filteredAthletes(){
+  if(!ADMIN_MODE||S_LOC_FILTER===null)return S.athletes;
+  return S.athletes.filter(function(a){return a._locationId===S_LOC_FILTER;});
+}
+
+/* ── ACTIONS ── */
+function loadAthletes(){
+  dbLoadAthletes().then(function(rows){
+    S.athletes=rows;
+    S.loading=false;S.screen=(SHARE_ID!==null)?"share":"app";render();
+  }).catch(function(err){S.loading=false;toast("Load failed: "+err.message,false);render();});
+}
+function saveAthlete(athData){
+  S.saving=true;updateSync();
+  dbInsert(athData).then(function(saved){
+    S.athletes.push(saved);S.selId=saved._dbid;S.tab="roster";
+    clearForm();S.saving=false;toast("✓ Athlete saved!");render();
+  }).catch(function(err){S.saving=false;updateSync();toast("Save failed: "+err.message,false);});
+}
+function updateAthlete(id,athData){
+  S.saving=true;updateSync();
+  dbUpdate(id,athData).then(function(saved){
+    S.athletes=S.athletes.map(function(a){return a._dbid===id?saved:a;});
+    S.selId=saved._dbid;S.tab="roster";S.viewEvalIdx=null;
+    clearForm();S.saving=false;toast("✓ Saved!");render();
+  }).catch(function(err){S.saving=false;updateSync();toast("Save failed: "+err.message,false);});
+}
+function deleteAthlete(id){
+  S.saving=true;updateSync();
+  dbDelete(id).then(function(){
+    S.athletes=S.athletes.filter(function(a){return a._dbid!==id;});
+    S.selId=S.athletes.length?S.athletes[0]._dbid:null;
+    S.saving=false;toast("Athlete removed.");render();
+  }).catch(function(err){S.saving=false;updateSync();toast("Delete failed: "+err.message,false);});
+}
+function updateSync(){var el=document.getElementById("sync-badge");if(!el)return;el.textContent=S.saving?"💾 Saving...":"✓ Synced";el.style.background=S.saving?"rgba(248,113,113,.15)":"rgba(34,197,94,.1)";el.style.borderColor=S.saving?"#f87171":"rgba(34,197,94,.3)";el.style.color=S.saving?"#f87171":"#22c55e";}
+
+/* ── DOM HELPERS ── */
+function mk(tag,css,txt){var el=document.createElement(tag);if(css)el.style.cssText=css;if(txt!=null)el.textContent=txt;return el;}
+function div(css){return mk("div",css);}
+function ap(p){for(var i=1;i<arguments.length;i++){if(arguments[i])p.appendChild(arguments[i]);}return p;}
+function lbl(t){return mk("div","font-size:10px;color:#64748b;font-weight:700;letter-spacing:.07em;text-transform:uppercase;margin-bottom:3px",t);}
+function ctitle(t){return mk("div","font-size:12px;font-weight:800;color:#f87171;letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px",t);}
+function badge(r){var sp=mk("span");if(!r){sp.style.cssText="color:#64748b;font-size:10px;font-weight:700";sp.textContent="—";}else{var label=r==="Elite"?"⭐ Elite":r;sp.style.cssText="background:"+(RB[r]||"rgba(245,158,11,.2)")+";color:"+(RC[r]||"#f59e0b")+";border:1px solid "+(RC[r]||"#f59e0b")+";border-radius:99px;padding:2px 7px;font-size:10px;font-weight:700;white-space:nowrap";sp.textContent=label;}return sp;}
+function scard(label,value,unit){var d=div("background:#2a1818;border:1px solid #243d73;border-radius:9px;padding:9px 13px;text-align:center;min-width:75px");ap(d,mk("div","font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px",label),mk("div","font-size:19px;font-weight:800;color:#f1f5f9;line-height:1.1",value||"—"));if(unit)ap(d,mk("div","font-size:10px;color:#64748b",unit));return d;}
+
+/* ── SVG CHARTS ── */
+var NS="http://www.w3.org/2000/svg";
+function svgE(tag,a){var n=document.createElementNS(NS,tag);for(var k in a)n.setAttribute(k,a[k]);return n;}
+function radarChart(ath,size){size=size||210;var ag=ageGrp(ath.age);var scores=RATED.map(function(t){return getNrm(ath.gender,t,ag,ath.results[t]);});if(!scores.some(function(s){return s!==null;}))return mk("p","color:#64748b;text-align:center;padding:28px 0;font-size:13px","No rated results yet");scores=scores.map(function(s){return s===null?0:s;});var svg=svgE("svg",{width:"100%",height:size,viewBox:"0 0 "+size+" "+size});var cx=size/2,cy=size/2,r=size*0.35,n=RATED.length,color=GB[ath.gender]||"#818cf8";[25,50,75,100].forEach(function(p){var pts=[];for(var i=0;i<n;i++){var a=2*Math.PI*i/n-Math.PI/2;pts.push((cx+r*p/100*Math.cos(a))+","+(cy+r*p/100*Math.sin(a)));}svg.appendChild(svgE("polygon",{points:pts.join(" "),fill:"none",stroke:"#2a1818","stroke-width":"1"}));});for(var i=0;i<n;i++){var a=2*Math.PI*i/n-Math.PI/2;svg.appendChild(svgE("line",{x1:cx,y1:cy,x2:cx+r*Math.cos(a),y2:cy+r*Math.sin(a),stroke:"#2a1818","stroke-width":"1"}));}var pts=[];for(var i=0;i<n;i++){var a=2*Math.PI*i/n-Math.PI/2;var rr=r*Math.min(scores[i],100)/100;pts.push((cx+rr*Math.cos(a))+","+(cy+rr*Math.sin(a)));}svg.appendChild(svgE("polygon",{points:pts.join(" "),fill:color,opacity:"0.2",stroke:color,"stroke-width":"2"}));for(var i=0;i<n;i++){var a=2*Math.PI*i/n-Math.PI/2;var rr=r*Math.min(scores[i],100)/100;svg.appendChild(svgE("circle",{cx:cx+rr*Math.cos(a),cy:cy+rr*Math.sin(a),r:"4",fill:color}));}for(var i=0;i<n;i++){var a=2*Math.PI*i/n-Math.PI/2;var lr=r+20;var tx=svgE("text",{x:cx+lr*Math.cos(a),y:cy+lr*Math.sin(a),"text-anchor":"middle","dominant-baseline":"middle",fill:"#94a3b8","font-size":"11","font-weight":"700"});tx.textContent=SHORT[i];svg.appendChild(tx);}var w=div("display:flex;justify-content:center");w.appendChild(svg);return w;}
+function lineChart(points,w,h,color){
+  // points: array of {label, value(0-100 or null)}
+  w=w||320;h=h||150;color=color||"#dc2626";
+  var pad={t:14,r:14,b:28,l:32},cw=w-pad.l-pad.r,ch=h-pad.t-pad.b;
+  var svg=svgE("svg",{width:"100%",height:h,viewBox:"0 0 "+w+" "+h});
+  [0,25,50,75,100].forEach(function(v){var y=pad.t+ch-ch*v/100;svg.appendChild(svgE("line",{x1:pad.l,y1:y,x2:pad.l+cw,y2:y,stroke:"#2a1818","stroke-width":"1"}));var tx=svgE("text",{x:pad.l-4,y:y,"text-anchor":"end","dominant-baseline":"middle",fill:"#64748b","font-size":"9"});tx.textContent=v;svg.appendChild(tx);});
+  var n=points.length,gx=n>1?cw/(n-1):0;
+  var coords=points.map(function(p,i){return p.value===null?null:{x:pad.l+(n>1?gx*i:cw/2),y:pad.t+ch-ch*Math.min(Math.max(p.value,0),100)/100};});
+  // line path
+  var path="";coords.forEach(function(c,i){if(!c)return;path+=(path?"L":"M")+c.x+","+c.y+" ";});
+  if(path)svg.appendChild(svgE("path",{d:path.trim(),fill:"none",stroke:color,"stroke-width":"2.5"}));
+  // points + labels
+  coords.forEach(function(c,i){
+    if(!c)return;
+    svg.appendChild(svgE("circle",{cx:c.x,cy:c.y,r:"4",fill:color}));
+    var vt=svgE("text",{x:c.x,y:c.y-9,"text-anchor":"middle",fill:"#e2e8f0","font-size":"9","font-weight":"700"});vt.textContent=points[i].value;svg.appendChild(vt);
+    var lt=svgE("text",{x:c.x,y:pad.t+ch+15,"text-anchor":"middle",fill:"#94a3b8","font-size":"9"});lt.textContent=points[i].label;svg.appendChild(lt);
+  });
+  var d=div("width:100%");d.appendChild(svg);return d;
+}
+function barChart(data,labels,colors,w,h){w=w||320;h=h||140;var pad={t:6,r:8,b:26,l:36},cw=w-pad.l-pad.r,ch=h-pad.t-pad.b;var svg=svgE("svg",{width:"100%",height:h,viewBox:"0 0 "+w+" "+h});var vals=data.filter(function(v){return v!==null&&!isNaN(v);});if(!vals.length){var d=div("width:100%");d.appendChild(svg);return d;}var minV=Math.min.apply(null,vals)*0.88,maxV=Math.max.apply(null,vals)*1.08,bw=cw/data.length*0.6,gap=cw/data.length;[0,.33,.67,1].forEach(function(f){var y=pad.t+ch-ch*f;svg.appendChild(svgE("line",{x1:pad.l,y1:y,x2:pad.l+cw,y2:y,stroke:"#2a1818","stroke-width":"1"}));var tx=svgE("text",{x:pad.l-3,y:y,"text-anchor":"end","dominant-baseline":"middle",fill:"#64748b","font-size":"9"});tx.textContent=Math.round((minV+(maxV-minV)*f)*100)/100;svg.appendChild(tx);});data.forEach(function(v,i){if(v===null||isNaN(v))return;var bh=Math.max(2,ch*(v-minV)/(maxV-minV)),x=pad.l+gap*i+(gap-bw)/2,y=pad.t+ch-bh;svg.appendChild(svgE("rect",{x:x,y:y,width:bw,height:bh,fill:colors[i]||"#64748b",rx:"4"}));var lt=svgE("text",{x:x+bw/2,y:pad.t+ch+14,"text-anchor":"middle",fill:"#94a3b8","font-size":"10"});lt.textContent=labels[i];svg.appendChild(lt);var vt=svgE("text",{x:x+bw/2,y:y-3,"text-anchor":"middle",fill:"#e2e8f0","font-size":"9","font-weight":"700"});vt.textContent=v;svg.appendChild(vt);});var d=div("width:100%");d.appendChild(svg);return d;}
+function groupedBar(datasets,labels,w,h){w=w||320;h=h||150;var pad={t:22,r:8,b:26,l:36},cw=w-pad.l-pad.r,ch=h-pad.t-pad.b;var svg=svgE("svg",{width:"100%",height:h,viewBox:"0 0 "+w+" "+h});var n=datasets.length,gw=cw/labels.length,bw=gw*0.65/Math.max(n,1);[0,25,50,75,100].forEach(function(v){var y=pad.t+ch-ch*v/100;svg.appendChild(svgE("line",{x1:pad.l,y1:y,x2:pad.l+cw,y2:y,stroke:"#2a1818","stroke-width":"1"}));var tx=svgE("text",{x:pad.l-3,y:y,"text-anchor":"end","dominant-baseline":"middle",fill:"#64748b","font-size":"9"});tx.textContent=v;svg.appendChild(tx);});labels.forEach(function(lb,li){var gx=pad.l+gw*li;datasets.forEach(function(ds,di){var v=ds.data[li];if(v===null||v===undefined)return;var bh=Math.max(2,ch*v/100),x=gx+(gw-bw*n)/2+bw*di,y=pad.t+ch-bh;svg.appendChild(svgE("rect",{x:x,y:y,width:bw,height:bh,fill:ds.color,rx:"3"}));});var lt=svgE("text",{x:gx+gw/2,y:pad.t+ch+14,"text-anchor":"middle",fill:"#94a3b8","font-size":"10"});lt.textContent=lb;svg.appendChild(lt);});datasets.forEach(function(ds,i){var lx=pad.l+cw-(n-i)*54;svg.appendChild(svgE("rect",{x:lx,y:4,width:9,height:9,fill:ds.color,rx:"2"}));var tx=svgE("text",{x:lx+12,y:9,"dominant-baseline":"middle",fill:"#94a3b8","font-size":"10"});tx.textContent=ds.label;svg.appendChild(tx);});var d=div("width:100%");d.appendChild(svg);return d;}
+
+/* ── RENDER ── */
+function goTab(t){S.tab=t;render();}
+function goSel(id){S.selId=id;S.viewEvalIdx=null;render();}
+function startNewEvaluation(ath){
+  ensureEvaluations(ath);
+  FORM.name=ath.name;FORM.age=ath.age;FORM.gender=ath.gender;FORM.program=ath.program||"";
+  FORM.height="";FORM.weight="";FORM.date="";FORM.notes="";FORM.goals="";FORM.results=blankR();
+  FORM.chinUpUnit='reps';
+  FORM._mode="newEval";FORM._editId=ath._dbid;FORM._editEvalIdx=null;
+  S.tab="add";render();
+}
+function startEditEvaluation(ath,evalIdx){
+  ensureEvaluations(ath);
+  var ev=ath.evaluations[evalIdx];
+  FORM.name=ath.name;FORM.age=ath.age;FORM.gender=ath.gender;FORM.program=ath.program||"";
+  FORM.height=ev.height||"";FORM.weight=ev.weight||"";FORM.date=ev.date||"";FORM.notes=ev.notes||"";FORM.goals=ev.goals||"";
+  FORM.results={};ALL_T.forEach(function(t){FORM.results[t]=(ev.results&&ev.results[t])||"";});
+  FORM.chinUpUnit=ev.chinUpUnit||ath.chinUpUnit||'reps';
+  FORM._mode="edit";FORM._editId=ath._dbid;FORM._editEvalIdx=evalIdx;
+  S.tab="add";render();
+}
+
+/* ── SHARE VIEW (read-only, single athlete, for parents) ── */
+function buildShareView(){
+  var wrap=div("height:100vh;display:flex;flex-direction:column;background:#000;overflow:hidden");
+  var h=div("background:linear-gradient(135deg,#060c1a,#0a1535);border-bottom:1px solid #3a1414;padding:14px 20px;display:flex;align-items:center;gap:12px;flex-shrink:0");
+  var icon=div("width:38px;height:38px;background:linear-gradient(135deg,#1d4ed8,#1e40af);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:19px");icon.textContent="⚡";
+  var titles=div("");ap(titles,mk("div","font-size:18px;font-weight:800;color:#f1f5f9","ATHLETE PERFORMANCE SCORE"),mk("div","font-size:10px;color:#f87171;letter-spacing:.08em;text-transform:uppercase;font-weight:600",LOCATION.name?LOCATION.name+" — Athlete Report":"Athlete Report"));
+  ap(h,icon,titles);wrap.appendChild(h);
+
+  var body=div("flex:1;overflow-y:auto;padding:20px");
+  var ath=null;for(var i=0;i<S.athletes.length;i++){if(S.athletes[i]._dbid===SHARE_ID){ath=S.athletes[i];break;}}
+  if(!ath){ap(body,mk("p","color:#64748b;text-align:center;padding-top:80px;font-size:14px","Athlete report not found."));wrap.appendChild(body);return wrap;}
+
+  var ag=ageGrp(ath.age);
+  var evals=ensureEvaluations(ath);
+  var disp=evals[evals.length-1];
+  var dispAth={name:ath.name,age:ath.age,gender:ath.gender,results:disp.results||blankR()};
+
+  ap(body,mk("div","font-size:28px;font-weight:800;color:#f1f5f9;margin-bottom:2px",ath.name));
+  var sub=div("color:#64748b;font-size:12px;margin-bottom:18px");
+  if(ath.program)ap(sub,mk("span","color:#f87171;font-weight:600;margin-right:8px",ath.program));
+  sub.appendChild(document.createTextNode("Evaluated: "+(disp.date||"—")));
+  body.appendChild(sub);
+
+  var bio=div("display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px");
+  [["Age",ath.age,"yrs"],["Gender",ath.gender,null],["Age Group",ag,null],["Height",disp.height,null],["Weight",disp.weight,"lbs"]].forEach(function(sc){ap(bio,scard(sc[0],sc[1],sc[2]));});
+  body.appendChild(bio);
+
+  var cr=div("display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px");
+  var rc=div("card");rc.className="card";ap(rc,ctitle("Performance Profile"),radarChart(dispAth),mk("p","font-size:10px;color:#64748b;text-align:center;margin-top:4px","Normalized vs age/gender benchmarks"));
+  var sc2=div("card");sc2.className="card";
+  ap(sc2,ctitle("vs Standards — "+S.sTest));
+  var stdArea=div("width:100%");sc2.appendChild(stdArea);
+  setTimeout(function(){updateStdBar(dispAth,ag,stdArea);},0);
+  ap(cr,rc,sc2);body.appendChild(cr);
+
+  var rg=div("card");rg.className="card";rg.appendChild(ctitle("Test Results"));
+  var grid=div("display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-top:6px");
+  RATED.forEach(function(t){var val=disp.results[t],r=getRat(ath.gender,t,ag,val),n=getNrm(ath.gender,t,ag,val),s=getS(ath.gender,t,ag);var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid "+(r?RC[r]+"55":"#2a1818"));var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em",t),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#475569"),fmtVal(t,val)||"—"));if(val&&t!=="Broad Jump")ap(vrow,mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,top,vrow);if(n!==null){var sh=div("display:flex;justify-content:space-between;margin-top:5px;margin-bottom:2px");ap(sh,mk("span","font-size:10px;color:#64748b","Score"),mk("span","font-size:10px;font-weight:700;font-family:'Courier New',monospace;color:"+(RC[r]||"#64748b"),n+"/100"));var pw=div("prog-wrap");pw.className="prog-wrap";var pb=div("prog");pb.className="prog";pb.style.cssText="width:"+Math.min(n,100)+"%;background:"+(RC[r]||"#4a2424");pw.appendChild(pb);ap(card,sh,pw);}if(s)ap(card,mk("p","margin-top:5px;font-size:10px;color:#475569",s.d==="L"?"Ex ≤"+s.ex+" · Gd ≤"+s.go:"Ex ≥"+fmtVal(t,s.ex)+" · Gd ≥"+fmtVal(t,s.go)));grid.appendChild(card);});
+  ["Chin up Hold"].forEach(function(t){var val=disp.results[t];if(!val)return;var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid #1a2d50");if(t==="Chin up Hold"){var unit=disp.chinUpUnit||ath.chinUpUnit||"sec";var r=getChinUpRat(ath.gender,val,unit);card.style.borderColor=r?RC[r]+"55":"#2a1818";var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em","Chin ups"),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#64748b"),val),mk("span","font-size:11px;color:#64748b",unit));ap(card,top,vrow);if(r){var sh=div("display:flex;justify-content:space-between;margin-top:5px");ap(sh,mk("span","font-size:10px;color:#64748b",unit==="sec"?"Any time = Below Avg":"Ex ≥16 (Boys) / ≥8 (Girls)"));card.appendChild(sh);}}else{var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:#64748b",val),mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px",dispName(t)),vrow);}grid.appendChild(card);});
+  rg.appendChild(grid);body.appendChild(rg);
+
+  if(disp.notes||disp.goals){var nr=div("display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px");if(disp.notes){var nc=div("card");nc.className="card";ap(nc,ctitle("Coach Observations"),mk("p","color:#94a3b8;font-size:13px;line-height:1.7",disp.notes));nr.appendChild(nc);}if(disp.goals){var gc=div("card");gc.className="card";ap(gc,ctitle("Athlete Goals"),mk("p","color:#94a3b8;font-size:13px;line-height:1.7",disp.goals));nr.appendChild(gc);}body.appendChild(nr);}
+
+  if(evals.length>1){
+    var hc=div("card");hc.className="card";hc.style.marginTop="14px";hc.appendChild(ctitle("Evaluation History"));
+    var hList=div("display:flex;flex-direction:column;gap:6px");
+    evals.forEach(function(ev,i){
+      var rsum=RATED.map(function(t){return getRat(ath.gender,t,ag,ev.results[t]);}).filter(Boolean);
+      var row=div("display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-radius:8px;background:#080f1e;border:1px solid #1a2d50");
+      var dateLabel=(ev.date||"(no date)")+(i===evals.length-1?"  · Latest":"");
+      ap(row,mk("div","font-size:13px;font-weight:700;color:#cbd5e1",dateLabel),mk("div","font-size:11px;color:#64748b",rsum.length+"/"+RATED.length+" tests rated"));
+      hList.appendChild(row);
+    });
+    hc.appendChild(hList);body.appendChild(hc);
+  }
+
+  ap(body,mk("p","text-align:center;color:#475569;font-size:11px;margin-top:24px","⚡ Powered by Athlete Performance Score"));
+  wrap.appendChild(body);return wrap;
+}
+
+/* ── SETUP SCREEN ── */
+function buildSetup(){
+  var wrap=div("flex:1;display:flex;align-items:center;justify-content:center;padding:20px");
+  var box=div("background:#0b1527;border:1px solid #1a2d50;border-radius:16px;padding:32px;max-width:420px;width:100%");
+  ap(box,mk("div","font-size:28px;font-weight:800;color:#f1f5f9;margin-bottom:4px","⚡ ATHLETE PERFORMANCE SCORE"),
+         mk("p","color:#64748b;font-size:13px;margin-bottom:28px","Select your location and enter your password to continue."));
+
+  var IS="width:100%;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:10px 12px;color:#e2e8f0;font-size:14px;outline:none;margin-bottom:14px;font-family:inherit";
+
+  var locSel=document.createElement("select");locSel.style.cssText=IS+"cursor:pointer";
+  var defaultOpt=document.createElement("option");defaultOpt.value="";defaultOpt.textContent="Loading locations...";defaultOpt.disabled=true;defaultOpt.selected=true;
+  locSel.appendChild(defaultOpt);
+
+  var passInp=mk("input",IS+"margin-bottom:6px");
+  passInp.type="password";passInp.placeholder="Password";
+
+  var errMsg=mk("p","color:#f87171;font-size:13px;margin-bottom:12px;display:none","");
+
+  var btn=mk("button","background:linear-gradient(135deg,#1d4ed8,#1e40af);border:none;border-radius:9px;padding:12px 28px;color:#fff;font-size:14px;font-weight:800;cursor:pointer;width:100%;margin-top:8px","Enter");
+  btn.onclick=function(){
+    var selLoc=locSel.value;
+    var pass=passInp.value;
+    if(!selLoc){errMsg.textContent="Please select a location.";errMsg.style.display="block";return;}
+    errMsg.style.display="none";
+
+    if(selLoc==="__ADMIN__"){
+      if(!pass){errMsg.textContent="Password required.";errMsg.style.display="block";return;}
+      if(pass!==ADMIN_PASSWORD){errMsg.textContent="Incorrect admin password.";errMsg.style.display="block";return;}
+      ADMIN_MODE=true;ADMIN_READONLY=true;S_LOC_FILTER=null;
+      LOCATION={id:null,name:"Admin (Read-Only)",code:"ADMIN"};
+      S.screen="loading";render();loadAthletes();return;
+    }
+
+    var loc=null;for(var i=0;i<locSel._locs.length;i++){if(String(locSel._locs[i].id)===selLoc){loc=locSel._locs[i];break;}}
+    if(!loc){errMsg.textContent="Location not found.";errMsg.style.display="block";return;}
+    if(!loc.password){LOCATION=loc;LOCATION_CODE=loc.code;S.screen="setpassword";render();return;}
+    if(!pass){errMsg.textContent="Password required.";errMsg.style.display="block";return;}
+    if(loc.password!==pass){errMsg.textContent="Incorrect password.";errMsg.style.display="block";return;}
+    ADMIN_MODE=false;ADMIN_READONLY=false;LOCATION=loc;LOCATION_CODE=loc.code;
+    window.history.replaceState({},"","?location="+loc.code);
+    S.screen="loading";render();loadAthletes();
+  };
+  passInp.addEventListener("keydown",function(e){if(e.key==="Enter")btn.click();});
+
+  ap(box,lbl("Location"),locSel,lbl("Password"),passInp,errMsg,btn);
+
+  var div2=mk("div","border-top:1px solid #1a2d50;margin:24px 0");
+  var newLink=div("font-size:13px;color:#64748b;text-align:center;cursor:pointer");
+  newLink.innerHTML="New location? <span style='color:#3b82f6;font-weight:600;text-decoration:underline'>Set one up →</span>";
+  newLink.onclick=function(){S.screen="register";render();};
+  ap(box,div2,newLink);
+  ap(wrap,box);
+
+  dbLoadAllLocations().then(function(locs){
+    locSel.innerHTML="";
+    var adminOpt=document.createElement("option");adminOpt.value="__ADMIN__";adminOpt.textContent="🔑 Admin (Read-Only)";
+    locSel.appendChild(adminOpt);
+    var sep=document.createElement("option");sep.disabled=true;sep.textContent="──────────────";locSel.appendChild(sep);
+    if(!locs.length){
+      var o=document.createElement("option");o.value="";o.textContent="No locations yet — set one up below";o.disabled=true;locSel.appendChild(o);
+    } else {
+      var o=document.createElement("option");o.value="";o.textContent="Select your location...";o.disabled=true;o.selected=true;locSel.appendChild(o);
+      locs.forEach(function(loc){var op=document.createElement("option");op.value=String(loc.id);op.textContent=loc.name;locSel.appendChild(op);});
+    }
+    locSel._locs=locs;
+  }).catch(function(){
+    locSel.innerHTML="";var o=document.createElement("option");o.value="";o.textContent="Error loading locations";o.disabled=true;o.selected=true;locSel.appendChild(o);
+    locSel._locs=[];
+  });
+
+  return wrap;
+}
+
+/* ── REGISTER NEW LOCATION ── */
+function buildRegister(){
+  var wrap=div("flex:1;display:flex;align-items:center;justify-content:center;padding:20px");
+  var box=div("background:#0b1527;border:1px solid #1a2d50;border-radius:16px;padding:32px;max-width:420px;width:100%");
+  ap(box,mk("div","font-size:22px;font-weight:800;color:#f1f5f9;margin-bottom:4px","New Location Setup"),
+         mk("p","color:#64748b;font-size:13px;margin-bottom:24px","Enter your location details and set a password."));
+  var IS="width:100%;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:10px 12px;color:#e2e8f0;font-size:14px;outline:none;margin-bottom:14px;font-family:inherit";
+  var nameInp=mk("input",IS);nameInp.placeholder="Location Name (e.g. Lincoln HS Football)";
+  var codeInp=mk("input",IS+"text-transform:uppercase");codeInp.placeholder="Location Code (e.g. LINCOLNHS)";
+  codeInp.addEventListener("input",function(){this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,"");});
+  var passInp=mk("input",IS);passInp.type="password";passInp.placeholder="Set a password";
+  var pass2Inp=mk("input",IS);pass2Inp.type="password";pass2Inp.placeholder="Confirm password";
+  var errMsg=mk("p","color:#f87171;font-size:13px;margin-bottom:12px;display:none","");
+  var btn=mk("button","background:linear-gradient(135deg,#1d4ed8,#1e40af);border:none;border-radius:9px;padding:12px 28px;color:#fff;font-size:14px;font-weight:800;cursor:pointer;width:100%","Create Location");
+  btn.onclick=function(){
+    var name=nameInp.value.trim(),code=codeInp.value.trim(),pass=passInp.value,pass2=pass2Inp.value;
+    if(!name||!code||!pass){errMsg.textContent="All fields required.";errMsg.style.display="block";return;}
+    if(pass!==pass2){errMsg.textContent="Passwords don't match.";errMsg.style.display="block";return;}
+    btn.textContent="Creating...";btn.disabled=true;
+    createLocation(name,code,pass).then(function(){
+      window.history.replaceState({},"","?location="+LOCATION.code);
+      LOCATION_CODE=LOCATION.code;
+      S.screen="loading";render();loadAthletes();
+    }).catch(function(err){
+      btn.textContent="Create Location";btn.disabled=false;
+      errMsg.textContent="Error: "+err.message;errMsg.style.display="block";
+    });
+  };
+  var backLink=mk("div","font-size:13px;color:#3b82f6;cursor:pointer;margin-top:16px;text-align:center","← Back to login");
+  backLink.onclick=function(){S.screen="setup";render();};
+  ap(box,lbl("Location Name"),nameInp,lbl("Location Code"),codeInp,lbl("Password"),passInp,lbl("Confirm Password"),pass2Inp,errMsg,btn,backLink);
+  ap(wrap,box);return wrap;
+}
+
+/* ── FIRST LOGIN — SET PASSWORD ── */
+function buildSetPassword(){
+  var wrap=div("flex:1;display:flex;align-items:center;justify-content:center;padding:20px");
+  var box=div("background:#0b1527;border:1px solid #1a2d50;border-radius:16px;padding:32px;max-width:420px;width:100%");
+  ap(box,mk("div","font-size:22px;font-weight:800;color:#f1f5f9;margin-bottom:4px","Welcome, "+LOCATION.name+"!"),
+         mk("p","color:#64748b;font-size:13px;margin-bottom:24px","First time logging in. Set a password for your location."));
+  var IS="width:100%;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:10px 12px;color:#e2e8f0;font-size:14px;outline:none;margin-bottom:14px;font-family:inherit";
+  var p1=mk("input",IS);p1.type="password";p1.placeholder="Create a password";
+  var p2=mk("input",IS);p2.type="password";p2.placeholder="Confirm password";
+  var errMsg=mk("p","color:#f87171;font-size:13px;margin-bottom:12px;display:none","");
+  var btn=mk("button","background:linear-gradient(135deg,#1d4ed8,#1e40af);border:none;border-radius:9px;padding:12px 28px;color:#fff;font-size:14px;font-weight:800;cursor:pointer;width:100%","Set Password & Enter");
+  btn.onclick=function(){
+    var pass=p1.value,pass2=p2.value;
+    if(!pass){errMsg.textContent="Password required.";errMsg.style.display="block";return;}
+    if(pass!==pass2){errMsg.textContent="Passwords don't match.";errMsg.style.display="block";return;}
+    btn.textContent="Saving...";btn.disabled=true;
+    fetch(SB_URL+"/rest/v1/aps_locations?id=eq."+LOCATION.id,{method:"PATCH",headers:HDRS,body:JSON.stringify({password:pass})})
+      .then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);LOCATION.password=pass;
+        window.history.replaceState({},"","?location="+LOCATION.code);
+        S.screen="loading";render();loadAthletes();
+      }).catch(function(err){btn.textContent="Set Password & Enter";btn.disabled=false;errMsg.textContent="Error: "+err.message;errMsg.style.display="block";});
+  };
+  p2.addEventListener("keydown",function(e){if(e.key==="Enter")btn.click();});
+  var backLink=mk("div","font-size:13px;color:#3b82f6;cursor:pointer;margin-top:16px;text-align:center","← Back to login");
+  backLink.onclick=function(){S.screen="setup";render();};
+  ap(box,lbl("New Password"),p1,lbl("Confirm Password"),p2,errMsg,btn,backLink);
+  ap(wrap,box);return wrap;
+}
+
+/* ── HEADER ── */
+function buildHeader(){
+  var h=div("background:linear-gradient(135deg,#060c1a,#0a1535);border-bottom:1px solid #1e3a6b;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0");
+  var icon=div("width:38px;height:38px;background:linear-gradient(135deg,#1d4ed8,#1e40af);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:19px");icon.textContent="⚡";
+  var titles=div("");
+  var subLabel=ADMIN_READONLY?"🔑 ADMIN — READ-ONLY — ALL LOCATIONS":(LOCATION.name||"Athlete Performance Score");
+  ap(titles,mk("div","font-size:17px;font-weight:800;color:#f1f5f9","ATHLETE PERFORMANCE SCORE"),
+            mk("div","font-size:10px;color:"+(ADMIN_READONLY?"#f59e0b":"#3b82f6")+";letter-spacing:.08em;text-transform:uppercase;font-weight:600",subLabel));
+  var left=div("display:flex;align-items:center;gap:12px");ap(left,icon,titles);
+  var right=div("display:flex;gap:8px;align-items:center");
+  var syncBadge=mk("div","background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);border-radius:8px;padding:5px 12px;font-size:12px;color:#22c55e;font-weight:600","✓ Live");
+  syncBadge.id="sync-badge";
+  var displayed=ADMIN_MODE?(S_LOC_FILTER===null?S.athletes.length:filteredAthletes().length):S.athletes.length;
+  var cnt=div("background:#0d1829;border:1px solid #1a2d50;border-radius:8px;padding:5px 12px;font-size:13px;color:#94a3b8");
+  var sp=mk("span","color:#3b82f6;font-weight:700;font-family:'Courier New',monospace;font-size:15px",displayed);
+  cnt.appendChild(sp);cnt.appendChild(document.createTextNode(" Athletes"));
+  ap(right,syncBadge,cnt);
+  if(!ADMIN_READONLY){
+    var addBtn=mk("button","background:linear-gradient(135deg,#1d4ed8,#1e40af);border:none;border-radius:8px;padding:8px 14px;color:#fff;font-size:13px;font-weight:700;cursor:pointer","+ Add Athlete");
+    addBtn.onclick=function(){clearForm();goTab("add");};
+    var switchBtn=mk("button","background:transparent;border:1px solid #1e3a6b;border-radius:8px;padding:8px 10px;color:#64748b;font-size:11px;font-weight:600;cursor:pointer","↩ Switch Location");
+    switchBtn.onclick=function(){
+      LOCATION={id:null,name:"",code:""};LOCATION_CODE="";S.athletes=[];S.selId=null;
+      window.history.replaceState({},"","?");
+      S.screen="setup";render();
+    };
+    ap(right,addBtn,switchBtn);
+  } else {
+    var signOut=mk("button","background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:6px 10px;color:#f59e0b;font-size:11px;font-weight:600;cursor:pointer","↩ Sign Out");
+    signOut.onclick=function(){ADMIN_MODE=false;ADMIN_READONLY=false;S_LOC_FILTER=null;LOCATION={id:null,name:"",code:""};S.screen="setup";S.athletes=[];render();};
+    right.appendChild(signOut);
+  }
+  ap(h,left,right);return h;
+}
+
+/* ── ADMIN LOCATION FILTER BAR ── */
+function buildAdminFilterBar(){
+  var bar=div("background:#080f1e;border-bottom:1px solid #1a2d50;padding:8px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;overflow-x:auto");
+  ap(bar,mk("div","font-size:11px;font-weight:700;color:#f59e0b;white-space:nowrap","📍 Location:"));
+  var locs={};S.athletes.forEach(function(a){if(a._locationId&&a._locationName)locs[a._locationId]=a._locationName;});
+  var locIds=Object.keys(locs);
+  var allPill=mk("button","padding:5px 12px;border-radius:99px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;border:1px solid "+(S_LOC_FILTER===null?"#3b82f6":"#1a2d50")+";background:"+(S_LOC_FILTER===null?"rgba(59,130,246,.15)":"#080f1e")+";color:"+(S_LOC_FILTER===null?"#3b82f6":"#64748b"),"All ("+S.athletes.length+")");
+  allPill.onclick=function(){S_LOC_FILTER=null;S.selId=null;render();};
+  bar.appendChild(allPill);
+  locIds.forEach(function(id){
+    var lid=parseInt(id);
+    var cnt=S.athletes.filter(function(a){return a._locationId===lid;}).length;
+    var isActive=S_LOC_FILTER===lid;
+    var pill=mk("button","padding:5px 12px;border-radius:99px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;border:1px solid "+(isActive?"#3b82f6":"#1a2d50")+";background:"+(isActive?"rgba(59,130,246,.15)":"#080f1e")+";color:"+(isActive?"#3b82f6":"#64748b"),locs[id]+" ("+cnt+")");
+    pill.onclick=(function(l){return function(){S_LOC_FILTER=l;S.selId=null;render();};})(lid);
+    bar.appendChild(pill);
+  });
+  return bar;
+}
+
+function buildNav(){
+  var nav=div("background:#060c18;border-bottom:1px solid #1a2d50;display:flex;padding:0 12px;flex-shrink:0;overflow-x:auto");
+  var tabs=[["roster","🏃 Roster"],["score","🏆 APS Score"],["analytics","📊 Analytics"]];
+  if(!ADMIN_READONLY)tabs.push(["add","➕ Add Athlete"]);
+  tabs.forEach(function(item){
+    var b=mk("button","","");b.className="tab-btn"+(S.tab===item[0]?" active":"");b.textContent=item[1];
+    b.onclick=(function(k){return function(){if(k==="add"&&S.tab!=="add")clearForm();goTab(k);};})(item[0]);nav.appendChild(b);
+  });
+  return nav;
+}
+function buildContent(){
+  var c=div("flex:1;display:flex;overflow:hidden");
+  if(S.tab==="roster")c.appendChild(buildRoster());
+  else if(S.tab==="score")c.appendChild(buildScore());
+  else if(S.tab==="analytics")c.appendChild(buildAnalytics());
+  else if(!ADMIN_READONLY)c.appendChild(buildAdd());
+  return c;
+}
+
+function render(){
+  var app=document.getElementById("app");app.innerHTML="";
+  if(S.screen==="loading"){ap(app,mk("div","flex:1;display:flex;align-items:center;justify-content:center;color:#3b82f6;font-size:15px;font-weight:700;letter-spacing:.05em","⚡ Loading..."));return;}
+  if(S.screen==="setup"){app.appendChild(buildSetup());return;}
+  if(S.screen==="register"){app.appendChild(buildRegister());return;}
+  if(S.screen==="setpassword"){app.appendChild(buildSetPassword());return;}
+  if(SHARE_ID!==null){app.appendChild(buildShareView());return;}
+  var children=[buildHeader(),buildNav()];
+  if(ADMIN_MODE)children.push(buildAdminFilterBar());
+  children.push(buildContent());
+  children.forEach(function(c){app.appendChild(c);});
+}
+
+/* ── CAT SCORE ── */
+function buildScore(){
+  var wrap=div("display:flex;flex-direction:column;flex:1;");
+
+  if(S.selId){
+    var backBar=div("background:#080f1e;border-bottom:1px solid #1a2d50;padding:10px 16px;flex-shrink:0;display:flex;align-items:center;gap:10px;cursor:pointer");
+    backBar.onclick=function(){S.selId=null;render();};
+    ap(backBar,mk("span","font-size:18px;color:#f87171","←"),mk("span","font-size:13px;font-weight:700;color:#94a3b8","Back to Leaderboard"));
+    wrap.appendChild(backBar);
+    var ath=null;for(var j=0;j<S.athletes.length;j++){if(S.athletes[j]._dbid===S.selId){ath=S.athletes[j];break;}}
+    var detail=div("flex:1;overflow-y:auto;padding:20px;padding-bottom:80px;");
+    if(ath){
+      var evals=ensureEvaluations(ath);
+      var disp=evals[evals.length-1];
+      var score=getParisiTotal(ath,disp);
+      var level=getCatLevel(score.total,ath.age);
+      var pct=Math.round(score.total/APS_MAX*100);
+      var isYouth=parseInt(ath.age)<=12;
+
+      // Level card
+      var levelCard=div("border-radius:16px;padding:24px;text-align:center;margin-bottom:16px;border:2px solid "+level.border+";background:"+level.bg);
+      ap(levelCard,
+        mk("div","font-size:32px;margin-bottom:8px",level.emoji),
+        mk("div","font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px;color:"+level.color,(isYouth?"Youth Performance Track":"Senior Performance Track")+" Level"),
+        mk("div","font-size:42px;font-weight:900;color:"+level.color+";line-height:1;letter-spacing:-.02em",level.name)
+      );
+      // Score
+      var scoreRow=div("display:flex;justify-content:center;align-items:baseline;gap:6px;margin:12px 0");
+      ap(scoreRow,
+        mk("span","font-size:52px;font-weight:900;color:#f1f5f9;font-family:'Courier New',monospace;line-height:1",score.total),
+        mk("span","font-size:16px;color:#64748b","/ "+APS_MAX+" pts")
+      );
+      levelCard.appendChild(scoreRow);
+      var barWrap=div("background:#1a2d50;border-radius:99px;height:8px;overflow:hidden;margin:4px 0");
+      var bar=div("height:100%;border-radius:99px;background:"+level.color);bar.style.width=pct+"%";barWrap.appendChild(bar);
+      levelCard.appendChild(barWrap);
+      levelCard.appendChild(mk("div","font-size:11px;color:#64748b;margin-top:4px",pct+"% of max possible"));
+      detail.appendChild(levelCard);
+
+      // Next level card
+      var nextLevel=getCatLevel(score.total+1,ath.age);
+      if(nextLevel.name!==level.name){
+        var needed=isYouth?
+          [{name:"Starter",max:180},{name:"Challenger",max:241},{name:"Competitor",max:302},{name:"Varsity",max:363},{name:"Regional",max:424},{name:"National",max:485},{name:"All-American",max:546},{name:"Elite",max:99999}]:
+          [{name:"Starter",max:424},{name:"Competitor",max:575},{name:"Varsity",max:696},{name:"Premier",max:797},{name:"Elite",max:99999}];
+        var curr=needed.find(function(l){return l.name===level.name;});
+        if(curr){
+          var gap=curr.max-score.total+1;
+          var nc=div("background:#080f1e;border:1px solid #1a2d50;border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center");
+          ap(nc,mk("div","font-size:13px;color:#94a3b8","Next level: "+mk("span","",nextLevel.name).outerHTML+" "+nextLevel.emoji),
+            mk("div","font-size:13px;font-weight:700;color:#f87171",gap+" pts needed"));
+          detail.appendChild(nc);
+        }
+      }
+
+      // Breakdown
+      var bk=div("card");bk.className="card";bk.appendChild(ctitle("Score Breakdown"));
+      ap(bk,mk("p","font-size:11px;color:#475569;margin-bottom:10px","10yd · 20yd · VJ · 5 Hop · 5/10/5 · Chin-ups  (40yd not scored in Parisi Challenge)"));
+      var tbl=div("display:flex;flex-direction:column;gap:8px");
+      var testLabels={"10 yd split":"10 Yd Split","20 yd split":"20 Yd Split","Vertical Jump":"Vertical Jump","Broad Jump":"Broad Jump","5-10-5 Agility":"5-10-5 Agility","Chin up Hold":"Chin Ups"};
+      var maxPts={"10 yd split":166,"20 yd split":166,"Vertical Jump":166,"Broad Jump":166,"5-10-5 Agility":166,"Chin up Hold":100};
+      score.rows.forEach(function(row){
+        var hasScore=row.pts!==null;
+        var mp=maxPts[row.t]||166;
+        var pctRow=hasScore?Math.round(row.pts/mp*100):0;
+        var rrow=div("background:#080f1e;border-radius:10px;padding:11px 14px;border:1px solid "+(hasScore?"#3a1414":"#1a1a1a"));
+        var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:"+(hasScore?"6px":"0"));
+        ap(top,
+          mk("div","font-size:13px;font-weight:700;color:"+(hasScore?"#f1f5f9":"#475569"),testLabels[row.t]||row.t),
+          ap(div("display:flex;align-items:baseline;gap:4px"),
+            mk("div","font-size:22px;font-weight:900;color:"+(hasScore?"#f87171":"#334155")+";font-family:'Courier New',monospace",hasScore?row.pts:"—"),
+            mk("div","font-size:10px;color:#64748b","/ "+mp)
+          )
+        );
+        rrow.appendChild(top);
+        if(hasScore){
+          var bw=div("background:#1a2d50;border-radius:99px;height:4px;overflow:hidden");
+          var bb=div("height:100%;border-radius:99px;background:#dc2626");bb.style.width=pctRow+"%";bw.appendChild(bb);
+          rrow.appendChild(bw);
+          if(row.val)rrow.appendChild(mk("div","font-size:11px;color:#64748b;margin-top:3px","Result: "+fmtVal(row.t,row.val)+(row.unit?" "+row.unit:(row.t==="Broad Jump"?"":" "+(UNITS[row.t]||"")))));
+        }else{
+          rrow.appendChild(mk("div","font-size:11px;color:#475569","No result recorded"));
+        }
+        tbl.appendChild(rrow);
+      });
+      bk.appendChild(tbl);detail.appendChild(bk);
+    }
+    ap(wrap,detail);return wrap;
+  }
+
+  // Leaderboard
+  var content=div("flex:1;overflow-y:auto;padding:20px;padding-bottom:80px;");
+  ap(content,
+    mk("div","font-size:26px;font-weight:800;color:#f1f5f9;margin-bottom:2px","🏆 Parisi Challenge"),
+    mk("p","font-size:13px;color:#64748b;margin-bottom:20px","Ranked by APS Performance Score")
+  );
+
+  if(!S.athletes.length){content.appendChild(mk("p","color:#64748b;font-size:14px;padding-top:40px;text-align:center","No athletes yet."));ap(wrap,content);return wrap;}
+
+  var scored=filteredAthletes().map(function(a){
+    var evals=ensureEvaluations(a);var disp=evals[evals.length-1];
+    var s=getParisiTotal(a,disp);
+    var lv=getCatLevel(s.total,a.age);
+    return{ath:a,total:s.total,level:lv,rows:s.rows};
+  }).sort(function(a,b){return b.total-a.total;});
+
+  var hasPts=scored.filter(function(d){return d.total>0;});
+  var noPts=scored.filter(function(d){return d.total===0;});
+
+  hasPts.forEach(function(d,i){
+    var pct=Math.round(d.total/APS_MAX*100);
+    var card=div("background:#080f1e;border-radius:12px;padding:14px 16px;margin-bottom:10px;cursor:pointer;border:1px solid "+d.level.border);
+    card.onclick=(function(id){return function(){S.selId=id;render();};})(d.ath._dbid);
+    var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:8px");
+    var left=div("");
+    var rankStr=i===0?"🥇 ":i===1?"🥈 ":i===2?"🥉 ":"#"+(i+1)+" ";
+    ap(left,
+      mk("div","font-weight:700;font-size:15px;color:#f1f5f9",rankStr+d.ath.name),
+      mk("div","font-size:11px;color:"+d.level.color+";margin-top:2px;font-weight:700",d.level.emoji+" "+d.level.name+" · "+(parseInt(d.ath.age)<=12?"Youth Track":"Senior Track"))
+    );
+    var scoreNum=div("text-align:right");
+    ap(scoreNum,
+      mk("div","font-size:28px;font-weight:900;color:#f1f5f9;font-family:'Courier New',monospace;line-height:1",d.total),
+      mk("div","font-size:10px;color:#64748b","pts")
+    );
+    ap(top,left,scoreNum);card.appendChild(top);
+    var bw=div("background:#0f1e38;border-radius:99px;height:5px;overflow:hidden");
+    var bb=div("height:100%;border-radius:99px;background:"+d.level.color);bb.style.width=pct+"%";bw.appendChild(bb);
+    card.appendChild(bw);
+    content.appendChild(card);
+  });
+
+  if(noPts.length){
+    content.appendChild(mk("div","font-size:11px;color:#475569;text-align:center;margin:16px 0 8px","— No scores yet —"));
+    noPts.forEach(function(d){
+      var row=div("background:#080f1e;border:1px solid #0f1e38;border-radius:10px;padding:12px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;cursor:pointer");
+      row.onclick=(function(id){return function(){S.selId=id;render();};})(d.ath._dbid);
+      ap(row,mk("div","font-weight:600;font-size:14px;color:#475569",d.ath.name),mk("div","font-size:20px;color:#334155;font-family:'Courier New',monospace","—"));
+      content.appendChild(row);
+    });
+  }
+
+  // Level reference
+  var ref=div("card");ref.className="card";ref.style.marginTop="20px";
+  ref.appendChild(ctitle("Level Chart"));
+  var catRows=[
+    ["Youth Performance Track (age ≤12)","",""],
+    ["🏁 Starter","0 – 180",""],["🎯 Challenger","181 – 241",""],["⚡ Competitor","242 – 302",""],
+    ["🔵 Varsity","303 – 363",""],["💫 Regional","364 – 424",""],["🌟 National","425 – 485",""],
+    ["🏆 All-American","486 – 546",""],["⭐ Elite","547+",""],
+    ["Senior Performance Track (age 13+)","",""],
+    ["⚪ Starter","0 – 424",""],["🟢 Competitor","425 – 575",""],["🔵 Varsity","576 – 696",""],
+    ["🔴 Premier","697 – 797",""],["⭐ Elite","798+",""],
+  ];
+  catRows.forEach(function(r){
+    var isHeader=r[1]==="";
+    var row=div("display:flex;justify-content:space-between;padding:"+(isHeader?"10px 0 4px":"6px 0")+";border-bottom:1px solid #1a1a1a");
+    if(isHeader){ap(row,mk("div","font-size:11px;font-weight:700;color:#f87171;text-transform:uppercase;letter-spacing:.06em",r[0]));}
+    else{ap(row,mk("div","font-size:13px;color:#e2e8f0",r[0]),mk("div","font-size:13px;color:#94a3b8;font-family:'Courier New',monospace",r[1]));}
+    ref.appendChild(row);
+  });
+  ap(ref,mk("p","font-size:11px;color:#475569;margin-top:10px","Scored on: 10yd · 20yd · Vertical Jump · 5 Hop · 5/10/5 · Chin-ups · Max "+APS_MAX+" pts"));
+  content.appendChild(ref);
+  ap(wrap,content);return wrap;
+}
+
+/* ── ROSTER ── */
+function buildRoster(){
+  if(S.selId){
+    // Detail view — full width with back button
+    var wrap=div("display:flex;flex-direction:column;flex:1;");
+    var backBar=div("background:#080f1e;border-bottom:1px solid #1a2d50;padding:10px 16px;flex-shrink:0;display:flex;align-items:center;gap:10px;cursor:pointer");
+    backBar.onclick=function(){S.selId=null;S.viewEvalIdx=null;render();};
+    ap(backBar,mk("span","font-size:18px;color:#f87171","←"),mk("span","font-size:13px;font-weight:700;color:#94a3b8","Back to Roster"));
+    var detail=div("flex:1;overflow-y:auto;padding:20px;padding-bottom:80px;");
+    var ath=null;for(var j=0;j<S.athletes.length;j++){if(S.athletes[j]._dbid===S.selId){ath=S.athletes[j];break;}}
+    ap(wrap,backBar);
+    if(!ath){ap(detail,mk("p","color:#64748b;font-size:14px;padding-top:80px;text-align:center","Athlete not found."));ap(wrap,detail);return wrap;}
+    var ag=ageGrp(ath.age);
+    var evals=ensureEvaluations(ath);
+    var evalIdx=(S.viewEvalIdx!==null&&S.viewEvalIdx<evals.length)?S.viewEvalIdx:evals.length-1;
+    var disp=evals[evalIdx];
+    var dh=div("display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;gap:10px;flex-wrap:wrap");
+    var sub=div("color:#64748b;font-size:12px;margin-top:2px");if(ath.program)ap(sub,mk("span","color:#f87171;font-weight:600;margin-right:8px",ath.program));sub.appendChild(document.createTextNode("Evaluated: "+(disp.date||"—")));
+    if(evalIdx!==evals.length-1){sub.appendChild(mk("span","margin-left:8px;color:#f87171;font-weight:700;font-size:11px;background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.3);border-radius:99px;padding:1px 9px","Viewing past evaluation"));}
+    var btnRow=div("display:flex;gap:8px;flex-wrap:wrap");
+    var shareBtn=mk("button","background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.35);color:#f87171;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer","🔗 Share");
+    shareBtn.onclick=(function(id){return function(){
+      var url=window.location.origin+window.location.pathname+"?athlete="+id;
+      if(navigator.clipboard){navigator.clipboard.writeText(url).then(function(){toast("Link copied! Send to parent.");});}
+      else{prompt("Copy this athlete link:",url);}
+    };})(ath._dbid);
+    if(!ADMIN_READONLY){
+      var newEvalBtn=mk("button","background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.35);color:#f87171;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer","+ New Evaluation");
+      newEvalBtn.onclick=(function(a){return function(){startNewEvaluation(a);};})(ath);
+      var editBtn=mk("button","background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.35);color:#f87171;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer","✎ Edit");
+      editBtn.onclick=(function(a,idx){return function(){startEditEvaluation(a,idx);};})(ath,evalIdx);
+      var delBtn=mk("button","background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:#f87171;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer","Remove");
+      delBtn.onclick=(function(id){return function(){if(confirm("Remove this athlete?"))deleteAthlete(id);};})(ath._dbid);
+      ap(btnRow,newEvalBtn,editBtn,shareBtn,delBtn);
+    } else {
+      ap(btnRow,shareBtn);
+    }
+    ap(dh,ap(div(""),mk("div","font-size:28px;font-weight:800;color:#f1f5f9",ath.name),sub),btnRow);detail.appendChild(dh);
+    var bio=div("display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px");
+    [["Age",ath.age,"yrs"],["Gender",ath.gender,null],["Age Group",ag,null],["Height",disp.height,null],["Weight",disp.weight,"lbs"]].forEach(function(sc){ap(bio,scard(sc[0],sc[1],sc[2]));});detail.appendChild(bio);
+    var dispAth={name:ath.name,age:ath.age,gender:ath.gender,results:disp.results||blankR()};
+    var cr=div("display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px");
+    // Side-by-side radar comparison when viewing a non-first evaluation
+    if(evals.length>1&&evalIdx>0){
+      var firstDisp=evals[0];
+      var firstDispAth={name:ath.name,age:ath.age,gender:ath.gender,results:firstDisp.results||blankR()};
+      var rc1=div("card");rc1.className="card";
+      ap(rc1,
+        mk("div","font-size:10px;font-weight:700;color:#64748b;letter-spacing:.07em;text-transform:uppercase;margin-bottom:4px","First Eval"),
+        mk("div","font-size:12px;font-weight:700;color:#f87171;margin-bottom:8px",firstDisp.date||"—"),
+        radarChart(firstDispAth,160),
+        mk("p","font-size:10px;color:#475569;text-align:center;margin-top:4px","Baseline")
+      );
+      var rc2=div("card");rc2.className="card";
+      var evalLabel=evalIdx===evals.length-1?"Latest":"Eval "+(evalIdx+1);
+      ap(rc2,
+        mk("div","font-size:10px;font-weight:700;color:#64748b;letter-spacing:.07em;text-transform:uppercase;margin-bottom:4px",evalLabel),
+        mk("div","font-size:12px;font-weight:700;color:#f87171;margin-bottom:8px",disp.date||"—"),
+        radarChart(dispAth,160),
+        mk("p","font-size:10px;color:#475569;text-align:center;margin-top:4px","Current View")
+      );
+      ap(cr,rc1,rc2);detail.appendChild(cr);
+      // vs Standards below, full width
+      var sc2=div("card");sc2.className="card";sc2.style.marginBottom="16px";
+      var stop=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:10px");stop.appendChild(ctitle("vs Standards"));
+      var stSel=document.createElement("select");stSel.className="inp";stSel.style.width="auto";stSel.style.fontSize="12px";stSel.style.padding="4px 8px";
+      RATED.forEach(function(t){var o=document.createElement("option");o.value=t;o.textContent=t;stSel.appendChild(o);});stSel.value=S.sTest;
+      var stdArea=div("width:100%");stSel.onchange=function(){S.sTest=this.value;updateStdBar(dispAth,ag,stdArea);};
+      ap(stop,stSel);sc2.appendChild(stop);sc2.appendChild(stdArea);setTimeout(function(){updateStdBar(dispAth,ag,stdArea);},0);
+      detail.appendChild(sc2);
+    } else {
+      // Single evaluation — original layout
+      var rc=div("card");rc.className="card";ap(rc,ctitle("Performance Profile"),radarChart(dispAth),mk("p","font-size:10px;color:#64748b;text-align:center;margin-top:4px","Normalized vs age/gender benchmarks"));
+      var sc2=div("card");sc2.className="card";
+      var stop=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:10px");stop.appendChild(ctitle("vs Standards"));
+      var stSel=document.createElement("select");stSel.className="inp";stSel.style.width="auto";stSel.style.fontSize="12px";stSel.style.padding="4px 8px";
+      RATED.forEach(function(t){var o=document.createElement("option");o.value=t;o.textContent=t;stSel.appendChild(o);});stSel.value=S.sTest;
+      var stdArea=div("width:100%");stSel.onchange=function(){S.sTest=this.value;updateStdBar(dispAth,ag,stdArea);};
+      ap(stop,stSel);sc2.appendChild(stop);sc2.appendChild(stdArea);setTimeout(function(){updateStdBar(dispAth,ag,stdArea);},0);
+      ap(cr,rc,sc2);detail.appendChild(cr);
+    }
+    var rg=div("card");rg.className="card";rg.appendChild(ctitle("Test Results"));
+    var grid=div("display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-top:6px");
+    RATED.forEach(function(t){var val=disp.results[t],r=getRat(ath.gender,t,ag,val),n=getNrm(ath.gender,t,ag,val),s=getS(ath.gender,t,ag);var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid "+(r?RC[r]+"55":"#2a1818"));var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em",t),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#475569"),fmtVal(t,val)||"—"));if(val&&t!=="Broad Jump")ap(vrow,mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,top,vrow);if(n!==null){var sh=div("display:flex;justify-content:space-between;margin-top:5px;margin-bottom:2px");ap(sh,mk("span","font-size:10px;color:#64748b","Score"),mk("span","font-size:10px;font-weight:700;font-family:'Courier New',monospace;color:"+(RC[r]||"#64748b"),n+"/100"));var pw=div("prog-wrap");pw.className="prog-wrap";var pb=div("prog");pb.className="prog";pb.style.cssText="width:"+Math.min(n,100)+"%;background:"+(RC[r]||"#4a2424");pw.appendChild(pb);ap(card,sh,pw);}if(s)ap(card,mk("p","margin-top:5px;font-size:10px;color:#475569",s.d==="L"?"Ex ≤"+s.ex+" · Gd ≤"+s.go:"Ex ≥"+fmtVal(t,s.ex)+" · Gd ≥"+fmtVal(t,s.go)));grid.appendChild(card);});
+    ["Chin up Hold"].forEach(function(t){var val=disp.results[t];if(!val)return;var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid #1a2d50");if(t==="Chin up Hold"){var unit=disp.chinUpUnit||ath.chinUpUnit||"sec";var r=getChinUpRat(ath.gender,val,unit);card.style.borderColor=r?RC[r]+"55":"#2a1818";var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em","Chin ups"),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#64748b"),val),mk("span","font-size:11px;color:#64748b",unit));ap(card,top,vrow);if(r){var sh=div("display:flex;justify-content:space-between;margin-top:5px");ap(sh,mk("span","font-size:10px;color:#64748b",unit==="sec"?"Any time = Below Avg":"Ex ≥16 (Boys) / ≥8 (Girls)"));card.appendChild(sh);}}else{var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:#64748b",val),mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px",dispName(t)),vrow);}grid.appendChild(card);});
+    rg.appendChild(grid);detail.appendChild(rg);
+    if(disp.notes||disp.goals){var nr=div("display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px");if(disp.notes){var nc=div("card");nc.className="card";ap(nc,ctitle("Coach Observations"),mk("p","color:#94a3b8;font-size:13px;line-height:1.7",disp.notes));nr.appendChild(nc);}if(disp.goals){var gc=div("card");gc.className="card";ap(gc,ctitle("Athlete Goals"),mk("p","color:#94a3b8;font-size:13px;line-height:1.7",disp.goals));nr.appendChild(gc);}detail.appendChild(nr);}
+    if(evals.length>1){
+      var hc=div("card");hc.className="card";hc.style.marginTop="14px";hc.appendChild(ctitle("Evaluation History"));
+      var hList=div("display:flex;flex-direction:column;gap:6px");
+      evals.forEach(function(ev,i){
+        var isActive=i===evalIdx;
+        var row=div("display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-radius:8px;cursor:pointer;background:"+(isActive?"rgba(248,113,113,.12)":"#0a0a0a")+";border:1px solid "+(isActive?"rgba(248,113,113,.4)":"#2a1818"));
+        row.onclick=(function(idx){return function(){S.viewEvalIdx=idx;render();};})(i);
+        var left=div("");
+        var dateLabel=(ev.date||"(no date)")+(i===evals.length-1?"  · Latest":"");
+        ap(left,mk("div","font-size:13px;font-weight:700;color:"+(isActive?"#f87171":"#cbd5e1"),dateLabel));
+        var rsum=RATED.map(function(t){return getRat(ath.gender,t,ag,ev.results[t]);}).filter(Boolean);
+        ap(left,mk("div","font-size:11px;color:#64748b;margin-top:2px",rsum.length+"/"+RATED.length+" tests rated"));
+        ap(row,left,mk("div","font-size:11px;color:"+(isActive?"#f87171":"#64748b")+";font-weight:700",isActive?"Viewing":"View →"));
+        hList.appendChild(row);
+      });
+      hc.appendChild(hList);detail.appendChild(hc);
+    }
+    if(evals.length>1){
+      var pc=div("card");pc.className="card";pc.style.marginTop="14px";
+      var ptop=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:10px");
+      ptop.appendChild(ctitle("Progression — "+S.sTest));
+      var pSel=document.createElement("select");pSel.className="inp";pSel.style.width="auto";pSel.style.fontSize="12px";pSel.style.padding="4px 8px";
+      RATED.forEach(function(t){var o=document.createElement("option");o.value=t;o.textContent=t;pSel.appendChild(o);});pSel.value=S.sTest;
+      var pArea=div("width:100%");
+      pSel.onchange=function(){S.sTest=this.value;render();};
+      ap(ptop,pSel);pc.appendChild(ptop);pc.appendChild(pArea);
+      var pts=evals.map(function(ev,i){return{label:ev.date||("#"+(i+1)),value:getNrm(ath.gender,S.sTest,ag,ev.results[S.sTest])};});
+      if(pts.every(function(p){return p.value===null;})){pArea.appendChild(mk("p","color:#64748b;text-align:center;padding:20px 0;font-size:13px","No "+S.sTest+" results recorded across sessions yet."));}
+      else{pArea.appendChild(lineChart(pts,310,150,GB[ath.gender]||"#dc2626"));ap(pc,mk("p","font-size:10px;color:#64748b;text-align:center;margin-top:4px","Score (0-100) per session, in date order entered"));}
+      detail.appendChild(pc);
+    }
+    ap(wrap,detail);return wrap;
+
+  } else {
+    // Full-width scrollable athlete list
+    var wrap=div("display:flex;flex-direction:column;flex:1;");
+    var list=div("flex:1;overflow-y:auto;padding-bottom:80px;");
+    var alist=filteredAthletes();
+    if(!alist.length)ap(list,mk("p","padding:20px;color:#64748b;font-size:13px","No athletes yet. Tap + Add Athlete to get started."));
+    alist.forEach(function(a){
+      var ag=ageGrp(a.age);
+      var rs=RATED.map(function(t){return getRat(a.gender,t,ag,a.results[t]);}).filter(Boolean);
+      var ex=rs.filter(function(r){return r==="Excellent";}).length;
+      var item=div("padding:16px 20px;border-bottom:1px solid #1a2d50;cursor:pointer;display:flex;justify-content:space-between;align-items:center;");
+      item.onclick=(function(id){return function(){goSel(id);};})(a._dbid);
+      var left=div("");
+      var gtag=mk("span","font-size:10px;padding:1px 7px;border-radius:99px;font-weight:700;margin-left:8px;background:"+(a.gender==="Boys"?"rgba(129,140,248,.15)":"rgba(244,114,182,.15)")+";color:"+(a.gender==="Boys"?"#818cf8":"#f472b6")+";border:1px solid "+(a.gender==="Boys"?"#818cf8":"#f472b6"),a.gender[0]);
+      var nameRow=div("display:flex;align-items:center;margin-bottom:3px");
+      ap(nameRow,mk("div","font-weight:700;font-size:15px;color:#f1f5f9",a.name),gtag);
+      ap(left,nameRow,mk("div","font-size:12px;color:#64748b","Age "+a.age+" · "+ag));
+      if(rs.length){var meta=div("display:flex;gap:8px;margin-top:4px");if(ex)ap(meta,mk("span","font-size:11px;color:#22c55e","★ "+ex+" Excellent"));ap(meta,mk("span","font-size:11px;color:#64748b",rs.length+"/"+RATED.length+" rated"));left.appendChild(meta);}
+      var arrow=mk("span","font-size:20px;color:#f87171;font-weight:700","›");
+      ap(item,left,arrow);
+      list.appendChild(item);
+    });
+    ap(wrap,list);return wrap;
+  }
+}
+
+function updateStdBar(ath,ag,area){if(!area)return;area.innerHTML="";var s=getS(ath.gender,S.sTest,ag);if(!s)return;area.appendChild(barChart([s.ex,s.go,s.av,s.ba],["Excellent","Good","Avg","Below Avg"],["#22c55e","#38bdf8","#f59e0b","#f87171"],310,135));var v=parseFloat(ath.results[S.sTest]);if(!isNaN(v)&&ath.results[S.sTest]!==""){var r=getRat(ath.gender,S.sTest,ag,ath.results[S.sTest]);var rp=mk("p","margin-top:6px;font-size:11px;color:#94a3b8;text-align:center","Your result: ");var vs=mk("span","font-family:'Courier New',monospace;color:"+(RC[r]||"#fff"),fmtVal(S.sTest,v)+(S.sTest==="Broad Jump"?"":" "+UNITS[S.sTest]));ap(rp,vs,document.createTextNode(" → "),badge(r));area.appendChild(rp);}}
+
+/* ── ANALYTICS ── */
+function buildAnalytics(){
+  var wrap=div("flex:1;overflow-y:auto;padding:20px");
+  var aList=filteredAthletes();
+  var aContext="All Athletes";
+  ap(wrap,mk("div","font-size:26px;font-weight:800;color:#f1f5f9;margin-bottom:4px","GROUP ANALYTICS"),mk("p","color:#64748b;font-size:13px;margin-bottom:16px",aList.length+" athlete"+(aList.length!==1?"s":"")+" · "+aContext));
+  var ss="background:#080f1e;border:1px solid #1e3a6b;color:#e2e8f0;border-radius:8px;padding:7px 12px;font-size:13px;cursor:pointer;outline:none";
+  var tSel=document.createElement("select");tSel.style.cssText=ss;RATED.forEach(function(t){var o=document.createElement("option");o.value=t;o.textContent=t;tSel.appendChild(o);});tSel.value=S.aTest;tSel.onchange=function(){S.aTest=this.value;refreshAnalytics();};
+  var gSel=document.createElement("select");gSel.style.cssText=ss;["All","Boys","Girls"].forEach(function(g){var o=document.createElement("option");o.value=g;o.textContent=g;gSel.appendChild(o);});gSel.value=S.aGen;gSel.onchange=function(){S.aGen=this.value;refreshAnalytics();};
+  var filters=div("display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:flex-end");ap(filters,ap(div(""),lbl("Test"),tSel),ap(div(""),lbl("Gender"),gSel));wrap.appendChild(filters);
+  var cr=div("display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px");
+  var rankCard=div("card");rankCard.className="card";rankCard.id="a-rank";
+  var agCard=div("card");agCard.className="card";agCard.id="a-ag";
+  ap(cr,rankCard,agCard);wrap.appendChild(cr);
+  var stdCard=div("card");stdCard.className="card";stdCard.id="a-std";wrap.appendChild(stdCard);
+  setTimeout(refreshAnalytics,0);return wrap;
+}
+function refreshAnalytics(){
+  var rc=document.getElementById("a-rank"),ac=document.getElementById("a-ag"),sc=document.getElementById("a-std");
+  if(!rc)return;rc.innerHTML="";ac.innerHTML="";sc.innerHTML="";
+  rc.appendChild(ctitle("Rankings — "+S.aTest));
+  var items=filteredAthletes().filter(function(a){return S.aGen==="All"||a.gender===S.aGen;}).map(function(a){var ag=ageGrp(a.age);return{name:a.name.split(" ")[0],score:getNrm(a.gender,S.aTest,ag,a.results[S.aTest]),r:getRat(a.gender,S.aTest,ag,a.results[S.aTest])};}).filter(function(d){return d.score!==null;}).sort(function(a,b){return b.score-a.score;});
+  if(!items.length)ap(rc,mk("p","color:#64748b;font-size:12px;padding:16px 0","No "+S.aTest+" results yet."));
+  else rc.appendChild(barChart(items.map(function(d){return d.score;}),items.map(function(d){return d.name;}),items.map(function(d){return RC[d.r]||"#64748b";}),320,155));
+  ap(rc,mk("p","font-size:10px;color:#64748b;margin-top:6px","Green=Excellent · Blue=Good · Amber=Avg · Red=Below Avg"));
+  ac.appendChild(ctitle("Avg by Age Group — "+S.aTest));
+  var gF=S.aGen==="All"?["Boys","Girls"]:[S.aGen];
+  var ds=gF.map(function(g){return{label:g,color:GB[g],data:AGS.map(function(ag){var sc2=filteredAthletes().filter(function(a){return a.gender===g&&ageGrp(a.age)===ag;}).map(function(a){return getNrm(a.gender,S.aTest,ag,a.results[S.aTest]);}).filter(function(v){return v!==null;});return sc2.length?Math.round(sc2.reduce(function(a,b){return a+b;},0)/sc2.length):null;})};});
+  ac.appendChild(groupedBar(ds,AGS,320,155));
+  sc.appendChild(ctitle("Standards — "+S.aTest));
+  var tbl=document.createElement("table");var thead=document.createElement("thead"),hr=document.createElement("tr");
+  [["Gender","#64748b"],["Age","#64748b"],["Excellent","#22c55e"],["Good","#38bdf8"],["Average","#f59e0b"],["Below Avg","#f87171"],["Unit","#64748b"]].forEach(function(h){var th=document.createElement("th");th.style.color=h[1];th.textContent=h[0];hr.appendChild(th);});
+  thead.appendChild(hr);tbl.appendChild(thead);
+  var tbody=document.createElement("tbody");
+  ["Boys","Girls"].forEach(function(g){AGS.forEach(function(ag){var s=getS(g,S.aTest,ag);if(!s)return;var row=document.createElement("tr");[[g,GB[g]],[ag,"#94a3b8"],[fmtVal(S.aTest,s.ex),"#22c55e"],[fmtVal(S.aTest,s.go),"#38bdf8"],[fmtVal(S.aTest,s.av),"#f59e0b"],[fmtVal(S.aTest,s.ba),"#f87171"],[S.aTest==="Broad Jump"?"ft/in":UNITS[S.aTest],"#64748b"]].forEach(function(cell,i){var td=document.createElement("td");td.style.color=cell[1];if(i>=2&&i<=5)td.style.fontFamily="'Courier New',monospace";td.textContent=cell[0];row.appendChild(td);});tbody.appendChild(row);});});
+  tbl.appendChild(tbody);sc.appendChild(tbl);
+}
+
+/* ── ADD ATHLETE ── */
+function buildAdd(){
+  var wrap=div("flex:1;overflow-y:auto;padding:20px;padding-bottom:100px");
+  var titleText="ADD ATHLETE",subText="Saved to "+LOCATION.name+" — visible to your coaches instantly.";
+  if(FORM._mode==="edit"){titleText="EDIT EVALUATION — "+FORM.name;subText="Editing the "+(FORM.date||"selected")+" evaluation.";}
+  else if(FORM._mode==="newEval"){titleText="NEW EVALUATION — "+FORM.name;subText="Adds a new dated evaluation to "+FORM.name+"'s history, keeping past results intact.";}
+  ap(wrap,mk("div","font-size:26px;font-weight:800;color:#f1f5f9;margin-bottom:4px",titleText),mk("p","color:#64748b;font-size:13px;margin-bottom:20px",subText));
+  var IS="width:100%;background:#080f1e;border:1px solid #1e3a6b;border-radius:8px;padding:8px 11px;color:#e2e8f0;outline:none;font-size:13px;font-family:inherit";
+  var cols=div("display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:16px");
+  var ic=div("card");ic.className="card";ic.appendChild(ctitle("Athlete Info"));
+  var ig=div("display:grid;gap:11px");
+  function mkI(field,extra){var i=document.createElement("input");i.style.cssText=IS;i.value=FORM[field]||"";for(var k in extra||{})i.setAttribute(k,extra[k]);i.addEventListener("input",function(){FORM[field]=this.value;});return i;}
+  function mkTa(field){var ta=document.createElement("textarea");ta.style.cssText=IS+"resize:vertical";ta.rows=2;ta.value=FORM[field]||"";ta.addEventListener("input",function(){FORM[field]=this.value;});return ta;}
+  ap(ig,ap(div(""),lbl("Name *"),mkI("name",{placeholder:"Full name"})));
+  var ageI=mkI("age",{type:"number",min:"9",max:"19",placeholder:"15"});
+  ageI.addEventListener("input",function(){FORM.age=this.value;onAgeGender();});
+  var genSel=document.createElement("select");genSel.style.cssText=IS;["Boys","Girls"].forEach(function(g){var o=document.createElement("option");o.value=g;o.textContent=g;genSel.appendChild(o);});
+  genSel.value=FORM.gender;genSel.addEventListener("change",function(){FORM.gender=this.value;onAgeGender();});
+  var ar=div("display:grid;grid-template-columns:1fr 1fr;gap:10px");ap(ar,ap(div(""),lbl("Age *"),ageI),ap(div(""),lbl("Gender"),genSel));ig.appendChild(ar);
+  var hw=div("display:grid;grid-template-columns:1fr 1fr;gap:10px");ap(hw,ap(div(""),lbl("Height"),mkI("height",{placeholder:"69 inches"})),ap(div(""),lbl("Weight (lbs)"),mkI("weight",{type:"number",placeholder:"145"})));ig.appendChild(hw);
+  var dp=div("display:grid;grid-template-columns:1fr 1fr;gap:10px");ap(dp,ap(div(""),lbl("Eval Date *"),mkI("date",{type:"date"})),ap(div(""),lbl("Program"),mkI("program",{placeholder:"Elite Performance"})));ig.appendChild(dp);
+  ap(ig,ap(div(""),lbl("Coach Notes"),mkTa("notes")),ap(div(""),lbl("Athlete Goals"),mkTa("goals")));ic.appendChild(ig);
+  var badgeSpans={};
+  var rc2=div("card");rc2.className="card";rc2.appendChild(ctitle("Test Results"));
+  ap(rc2,mk("p","font-size:11px;color:#475569;margin-bottom:10px","Leave blank if not tested."));
+  var rg=div("display:grid;gap:9px");
+  function onAgeGender(){RATED.forEach(function(t){var bd=badgeSpans[t];if(!bd||!bd.parentNode)return;var r=FORM.age?getRat(FORM.gender,t,ageGrp(FORM.age),FORM.results[t]):null;var nb=badge(r);bd.parentNode.replaceChild(nb,bd);badgeSpans[t]=nb;});}
+  RATED.forEach(function(t){
+    var row=div("display:grid;grid-template-columns:2fr auto;gap:8px;align-items:flex-end");
+    var initR=FORM.age?getRat(FORM.gender,t,ageGrp(FORM.age),FORM.results[t]):null;
+    var bd=badge(initR);badgeSpans[t]=bd;
+    var bdWrap=div("display:flex;align-items:center;padding-bottom:2px");bdWrap.appendChild(bd);
+    if(t==="Broad Jump"){
+      var cur=parseFloat(FORM.results[t]);var curFt="",curIn="";
+      if(!isNaN(cur)&&FORM.results[t]!==""){curFt=String(Math.floor(cur/12));curIn=String(Math.round(cur-Math.floor(cur/12)*12));}
+      var BJIS=IS+"min-width:0;padding:8px 4px;text-align:center;";
+      var ftI=document.createElement("input");ftI.style.cssText=BJIS;ftI.type="number";ftI.step="1";ftI.min="0";ftI.value=curFt;ftI.placeholder="ft";
+      var inI=document.createElement("input");inI.style.cssText=BJIS;inI.type="number";inI.step="1";inI.min="0";inI.max="11";inI.value=curIn;inI.placeholder="in";
+      function syncBJ(){
+        var fv=ftI.value.trim(),iv=inI.value.trim();
+        if(fv===""&&iv===""){FORM.results[t]="";}
+        else{
+          var f=parseInt(fv)||0;var n=parseInt(iv)||0;
+          if(n>11){n=11;inI.value="11";}
+          if(n<0){n=0;inI.value="0";}
+          FORM.results[t]=String(f*12+n);
+        }
+        var bd2=badgeSpans[t];
+        if(bd2&&bd2.parentNode){var r=FORM.age?getRat(FORM.gender,t,ageGrp(FORM.age),FORM.results[t]):null;var nb=badge(r);bd2.parentNode.replaceChild(nb,bd2);badgeSpans[t]=nb;}
+      }
+      ftI.addEventListener("input",syncBJ);inI.addEventListener("input",syncBJ);
+      var bjGrid=div("display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px");ap(bjGrid,ftI,inI);
+      ap(row,ap(div(""),lbl("Broad Jump (ft / in)"),bjGrid),bdWrap);rg.appendChild(row);
+      return;
+    }
+    var i=document.createElement("input");i.style.cssText=IS;i.type="number";i.step="0.001";i.value=FORM.results[t]||"";i.placeholder=UNITS[t];
+    i.addEventListener("input",function(){FORM.results[t]=this.value;var bd=badgeSpans[t];if(bd&&bd.parentNode){var r=FORM.age?getRat(FORM.gender,t,ageGrp(FORM.age),this.value):null;var nb=badge(r);bd.parentNode.replaceChild(nb,bd);badgeSpans[t]=nb;}});
+    ap(row,ap(div(""),lbl(t+" ("+UNITS[t]+")"),i),bdWrap);rg.appendChild(row);
+  });
+  var extra=div("border-top:1px solid #2a1818;padding-top:9px;margin-top:4px");ap(extra,mk("p","font-size:11px;color:#475569;margin-bottom:8px","Additional (no benchmark)"));
+  // Chin ups — with reps/sec dropdown
+  (function(){
+    var cuRow=div("display:grid;grid-template-columns:1fr auto;gap:8px;align-items:flex-end;margin-bottom:8px");
+    var cuInp=document.createElement("input");cuInp.style.cssText=IS+"min-width:0;padding:8px 4px;text-align:center;";cuInp.type="number";cuInp.step="1";cuInp.value=FORM.results["Chin up Hold"]||"";cuInp.placeholder="0";
+    cuInp.addEventListener("input",function(){FORM.results["Chin up Hold"]=this.value;});
+    var cuSel=document.createElement("select");cuSel.style.cssText=IS+"cursor:pointer;width:90px;";
+    ["reps","sec"].forEach(function(u){var o=document.createElement("option");o.value=u;o.textContent=u;if((FORM.chinUpUnit||"reps")===u)o.selected=true;cuSel.appendChild(o);});
+    cuSel.addEventListener("change",function(){FORM.chinUpUnit=this.value;});
+    ap(cuRow,ap(div(""),lbl("Chin ups"),cuInp),ap(div(""),lbl("Unit"),cuSel));
+    extra.appendChild(cuRow);
+  }());
+  
+  rg.appendChild(extra);rc2.appendChild(rg);
+  ap(cols,ic,rc2);wrap.appendChild(cols);
+  var errDiv=mk("div","color:#f87171;font-size:13px;margin-bottom:12px;background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);border-radius:8px;padding:8px 14px;display:none","");
+  wrap.appendChild(errDiv);
+  var btns=div("display:flex;gap:10px");
+  var saveLabel=FORM._mode==="edit"?"✓ Save Changes":FORM._mode==="newEval"?"✓ Save New Evaluation":"✓ Save Athlete";
+  var saveBtn=mk("button","",saveLabel);saveBtn.className="btn-p";
+  saveBtn.addEventListener("click",function(){
+    var name=FORM.name.trim(),age=FORM.age.trim();
+    if(!name||!age){errDiv.textContent="Name and Age are required.";errDiv.style.display="block";return;}
+    if(!FORM.date){errDiv.textContent="Eval Date is required.";errDiv.style.display="block";return;}
+    errDiv.style.display="none";
+    var res={};ALL_T.forEach(function(t){res[t]=FORM.results[t]||"";});
+
+    if(FORM._mode==="new"){
+      // Duplicate check — same name + gender already on roster?
+      var dup=null;
+      for(var di=0;di<S.athletes.length;di++){
+        var a=S.athletes[di];
+        if(a.name.trim().toLowerCase()===name.toLowerCase()&&a.gender===FORM.gender){dup=a;break;}
+      }
+      if(dup){
+        var goExisting=confirm("An athlete named \""+name+"\" ("+FORM.gender+") already exists on this roster.\n\nTap OK to add this as a NEW EVALUATION for the existing athlete (recommended — keeps their history together).\n\nTap Cancel to create a separate new athlete anyway.");
+        if(goExisting){
+          ensureEvaluations(dup);
+          var evals2=dup.evaluations.slice();
+          var entry={date:FORM.date,height:FORM.height,weight:FORM.weight,results:res,notes:FORM.notes,goals:FORM.goals};
+          evals2.push(entry);
+          var updated2={name:dup.name,age:age,gender:dup.gender,program:FORM.program||dup.program,
+            date:entry.date,height:entry.height,weight:entry.weight,results:entry.results,notes:entry.notes,goals:entry.goals,
+            evaluations:evals2};
+          updateAthlete(dup._dbid,updated2);
+          return;
+        }
+        // else fall through and create a separate athlete as requested
+      }
+      saveAthlete({name:name,age:age,gender:FORM.gender,height:FORM.height,weight:FORM.weight,date:FORM.date,program:FORM.program,notes:FORM.notes,goals:FORM.goals,results:res,chinUpUnit:FORM.chinUpUnit||'reps',
+        evaluations:[{date:FORM.date,height:FORM.height,weight:FORM.weight,results:res,notes:FORM.notes,goals:FORM.goals,chinUpUnit:FORM.chinUpUnit||'reps'}]});
+      return;
+    }
+
+    // edit or newEval — locate athlete being modified
+    var target=null;for(var i=0;i<S.athletes.length;i++){if(S.athletes[i]._dbid===FORM._editId){target=S.athletes[i];break;}}
+    if(!target){errDiv.textContent="Athlete not found.";errDiv.style.display="block";return;}
+    ensureEvaluations(target);
+    var evals=target.evaluations.slice();
+    var newEntry={date:FORM.date,height:FORM.height,weight:FORM.weight,results:res,notes:FORM.notes,goals:FORM.goals,chinUpUnit:FORM.chinUpUnit||'reps'};
+
+    if(FORM._mode==="newEval"){
+      evals.push(newEntry);
+    } else { // edit
+      var idx=(FORM._editEvalIdx!==null&&FORM._editEvalIdx<evals.length)?FORM._editEvalIdx:evals.length-1;
+      evals[idx]=newEntry;
+    }
+    var latest=evals[evals.length-1];
+    var updated={name:name,age:age,gender:FORM.gender,program:FORM.program,
+      date:latest.date,height:latest.height,weight:latest.weight,results:latest.results,notes:latest.notes,goals:latest.goals,chinUpUnit:latest.chinUpUnit||'reps',
+      evaluations:evals};
+    updateAthlete(FORM._editId,updated);
+  });
+
+  var clrBtn=mk("button","",FORM._mode==="new"?"Clear":"Cancel");clrBtn.className="btn-g";
+  clrBtn.addEventListener("click",function(){
+    if(FORM._mode!=="new"){clearForm();S.tab="roster";render();return;}
+    clearForm();wrap.querySelectorAll("input,textarea").forEach(function(el){el.value="";});genSel.value="Boys";errDiv.style.display="none";RATED.forEach(function(t){var bd=badgeSpans[t];if(bd&&bd.parentNode){var nb=badge(null);bd.parentNode.replaceChild(nb,bd);badgeSpans[t]=nb;}});
+  });
+  ap(btns,saveBtn,clrBtn);wrap.appendChild(btns);return wrap;
+}
+
+/* ── BOOT ── */
+render();
+if(!LOCATION_CODE){
+  S.screen="setup";render();
+} else {
+  loadLocation().then(function(found){
+    if(!found){S.screen="setup";render();}
+    else{loadAthletes();}
+  }).catch(function(err){toast("Connection error: "+err.message,false);S.screen="setup";render();});
+}
+</script>
+</body>
+</html>
