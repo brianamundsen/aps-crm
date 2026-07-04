@@ -569,7 +569,7 @@ function buildAdminFilterBar(){
 
 function buildNav(){
   var nav=div("background:#060c18;border-bottom:1px solid #1a2d50;display:flex;padding:0 12px;flex-shrink:0;overflow-x:auto");
-  var tabs=[["roster","🏃 Roster"],["score","🏆 APS Score"],["analytics","📊 Analytics"]];
+  var tabs=[["roster","🏃 Roster"],["score","🏆 APS Score"],["analytics","📊 Analytics"],["pipeline","🎯 Pipeline"]];
   if(!ADMIN_READONLY)tabs.push(["add","➕ Add Athlete"]);
   tabs.forEach(function(item){
     var b=mk("button","","");b.className="tab-btn"+(S.tab===item[0]?" active":"");b.textContent=item[1];
@@ -577,11 +577,251 @@ function buildNav(){
   });
   return nav;
 }
+/* ══════════════════ PIPELINE (CRM) ══════════════════ */
+var STAGES=[["lead","Leads","#60a5fa"],["trial","Trials","#fbbf24"],["active","Active","#34d399"],["inactive","Inactive","#94a3b8"],["lost","Lost","#fb7185"]];
+var ACTC={note:"#94a3b8",call:"#60a5fa",text:"#22d3ee",email:"#a78bfa",meeting:"#fbbf24",eval:"#34d399",stage_change:"#f87171"};
+var PIPE={loaded:false,loading:false,contacts:[],locMap:{},taskCount:0,filter:null,detailId:null,detail:null,detailLoading:false};
+var PADD=null;
+
+async function apiPatch(table,filter,body){var r=await fetch(SB_URL+"/rest/v1/"+table+"?"+filter,{method:"PATCH",headers:HDRS,body:JSON.stringify(body)});var t=await r.text();if(!r.ok)throw new Error("HTTP "+r.status+" "+t);return t?JSON.parse(t):[];}
+
+function pipeName(c){return(((c.first_name||"")+" "+(c.last_name||"")).trim())||"Unnamed contact";}
+function stageLabel(k){for(var i=0;i<STAGES.length;i++)if(STAGES[i][0]===k)return STAGES[i][1];return k;}
+function contactLoc(id){if(!ADMIN_MODE)return LOCATION.id;for(var i=0;i<PIPE.contacts.length;i++)if(PIPE.contacts[i].id===id)return PIPE.contacts[i].location_id;return null;}
+function timeAgo(iso){var d=new Date(iso),s=(Date.now()-d.getTime())/1000;if(s<60)return"just now";if(s<3600)return Math.floor(s/60)+"m ago";if(s<86400)return Math.floor(s/3600)+"h ago";if(s<604800)return Math.floor(s/86400)+"d ago";return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});}
+
+async function loadPipeline(){
+  try{
+    var q=ADMIN_MODE?"aps_contacts?select=*&order=updated_at.desc":"aps_contacts?location_id=eq."+LOCATION.id+"&select=*&order=updated_at.desc";
+    PIPE.contacts=await apiGet(q);
+    await refreshTaskCount();
+    if(ADMIN_MODE){var locs=await dbLoadAllLocations();PIPE.locMap={};locs.forEach(function(l){PIPE.locMap[l.id]=l.name||l.code;});}
+    PIPE.loaded=true;PIPE.loading=false;render();
+  }catch(e){PIPE.loading=false;toast("Could not load pipeline",false);}
+}
+async function refreshTaskCount(){var q=ADMIN_MODE?"aps_tasks?select=id&done=eq.false":"aps_tasks?select=id&done=eq.false&location_id=eq."+LOCATION.id;var t=await apiGet(q);PIPE.taskCount=t.length;}
+
+async function pipeOpen(id){PIPE.detailId=id;PIPE.detail=null;PIPE.detailLoading=true;render();await loadPipeDetail(id);}
+function pipeClose(){PIPE.detailId=null;PIPE.detail=null;render();}
+async function loadPipeDetail(id){
+  try{
+    var acts=await apiGet("aps_activities?contact_id=eq."+id+"&select=*&order=created_at.desc&limit=50");
+    var tasks=await apiGet("aps_tasks?contact_id=eq."+id+"&select=*&order=done.asc,due_date.asc.nullslast");
+    var mem=await apiGet("aps_memberships?contact_id=eq."+id+"&status=eq.active&select=plan_name,status,price_cents,billing_interval&limit=1");
+    PIPE.detail={acts:acts,tasks:tasks,mem:(mem&&mem[0])||null};PIPE.detailLoading=false;
+    if(PIPE.detailId===id)render();
+  }catch(e){PIPE.detailLoading=false;toast("Could not load contact",false);}
+}
+async function pipeMove(id,stage){
+  var c=null,i;for(i=0;i<PIPE.contacts.length;i++)if(PIPE.contacts[i].id===id)c=PIPE.contacts[i];
+  if(!c||c.stage===stage)return;var from=c.stage;
+  try{
+    await apiPatch("aps_contacts","id=eq."+id,{stage:stage});
+    await apiPost("aps_activities",{location_id:contactLoc(id),contact_id:id,type:"stage_change",body:from+" → "+stage});
+    c.stage=stage;toast("Moved to "+stageLabel(stage),true);await loadPipeDetail(id);
+  }catch(e){toast("Could not update stage",false);}
+}
+async function pipeAddActivity(id,type,body){
+  if(!body){toast("Add a quick note first",false);return;}
+  try{await apiPost("aps_activities",{location_id:contactLoc(id),contact_id:id,type:type,body:body});toast("Logged",true);await loadPipeDetail(id);}
+  catch(e){toast("Could not log activity",false);}
+}
+async function pipeAddTask(id,title,due){
+  if(!title){toast("Name the follow-up first",false);return;}
+  try{await apiPost("aps_tasks",{location_id:contactLoc(id),contact_id:id,title:title,due_date:due||null});toast("Follow-up added",true);await refreshTaskCount();await loadPipeDetail(id);}
+  catch(e){toast("Could not add follow-up",false);}
+}
+async function pipeToggleTask(tid,done){try{await apiPatch("aps_tasks","id=eq."+tid,{done:done});await refreshTaskCount();if(PIPE.detailId!=null)await loadPipeDetail(PIPE.detailId);}catch(e){toast("Could not update task",false);}}
+
+function pipeAddOpen(){PADD={first_name:"",last_name:"",email:"",phone:"",relationship:"",source:"",stage:"lead",notes:"",athlete_id:"",err:""};render();}
+function pipeAddClose(){PADD=null;render();}
+async function pipeSaveContact(){
+  if(!PADD.first_name.trim()&&!PADD.last_name.trim()){PADD.err="Add a first or last name so this contact has something to go by.";render();return;}
+  var rec={location_id:LOCATION.id,first_name:PADD.first_name.trim(),last_name:PADD.last_name.trim(),email:PADD.email.trim()||null,phone:PADD.phone.trim()||null,relationship:PADD.relationship||null,source:PADD.source||null,stage:PADD.stage,notes:PADD.notes.trim()||null,athlete_id:PADD.athlete_id?parseInt(PADD.athlete_id):null};
+  try{await apiPost("aps_contacts",rec);PADD=null;toast("Contact added",true);PIPE.loaded=false;PIPE.loading=false;render();}
+  catch(e){PADD.err="Could not save: "+e.message;render();}
+}
+
+function buildPipeline(){
+  var wrap=div("flex:1;display:flex;flex-direction:column;overflow:hidden");
+  if(!PIPE.loaded){
+    if(!PIPE.loading){PIPE.loading=true;setTimeout(loadPipeline,0);}
+    ap(wrap,mk("div","flex:1;display:flex;align-items:center;justify-content:center;color:#3b82f6;font-size:14px;font-weight:700","⚡ Loading pipeline..."));
+    return wrap;
+  }
+  /* scoreboard */
+  var sc=div("display:flex;gap:8px;padding:12px;overflow-x:auto;flex-shrink:0;align-items:stretch");
+  STAGES.forEach(function(s){
+    var n=PIPE.contacts.filter(function(c){return c.stage===s[0];}).length,active=PIPE.filter===s[0];
+    var card=mk("button","flex:1;min-width:88px;background:#080f1e;border:1px solid "+(active?s[2]:"#1a2d50")+";border-top:3px solid "+s[2]+";border-radius:8px;padding:10px 12px;text-align:left;cursor:pointer");
+    ap(card,mk("div","font-size:26px;font-weight:900;color:#f1f5f9;line-height:1",String(n)),mk("div","font-size:10px;color:#64748b;font-weight:700;letter-spacing:.07em;text-transform:uppercase;margin-top:4px",s[1]));
+    card.onclick=(function(k){return function(){PIPE.filter=PIPE.filter===k?null:k;render();};})(s[0]);
+    sc.appendChild(card);
+  });
+  var tc=mk("button","flex:1;min-width:88px;background:#080f1e;border:1px solid #1a2d50;border-top:3px solid #f87171;border-radius:8px;padding:10px 12px;text-align:left;cursor:pointer");
+  ap(tc,mk("div","font-size:26px;font-weight:900;color:#f87171;line-height:1",String(PIPE.taskCount)),mk("div","font-size:10px;color:#64748b;font-weight:700;letter-spacing:.07em;text-transform:uppercase;margin-top:4px","Tasks Due"));
+  tc.onclick=function(){toast(PIPE.taskCount?PIPE.taskCount+" open follow-up(s) at this location":"No open follow-ups",true);};
+  sc.appendChild(tc);
+  if(!ADMIN_READONLY){var addB=mk("button","flex-shrink:0;background:#dc2626;color:#fff;border:none;border-radius:8px;padding:0 16px;font-weight:700;font-size:13px;cursor:pointer;align-self:stretch","+ Add");addB.onclick=pipeAddOpen;sc.appendChild(addB);}
+  ap(wrap,sc);
+
+  if(PIPE.contacts.length===0){
+    var emp=div("flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px;color:#64748b");
+    ap(emp,mk("div","font-size:18px;font-weight:800;color:#f1f5f9;margin-bottom:6px","No contacts yet"),mk("div","font-size:13px;max-width:330px;line-height:1.5","This location's pipeline is empty. Add your first prospect to start moving people from lead to member."));
+    if(!ADMIN_READONLY){var ab=mk("button","margin-top:16px;background:#dc2626;color:#fff;font-weight:700;font-size:13px;padding:10px 18px;border-radius:8px;border:none;cursor:pointer","+ Add contact");ab.onclick=pipeAddOpen;ap(emp,ab);}
+    ap(wrap,emp);
+    if(PIPE.detailId!=null)wrap.appendChild(buildPipeDrawer());
+    if(PADD)wrap.appendChild(buildPipeAddModal());
+    return wrap;
+  }
+  /* board */
+  var board=div("flex:1;display:flex;gap:12px;overflow-x:auto;padding:0 12px 16px;align-items:flex-start");
+  var shown=PIPE.filter?STAGES.filter(function(s){return s[0]===PIPE.filter;}):STAGES;
+  var total=PIPE.contacts.length||1;
+  shown.forEach(function(s){
+    var list=PIPE.contacts.filter(function(c){return c.stage===s[0];});
+    var col=div("flex:0 0 280px;min-width:280px;display:flex;flex-direction:column");
+    var head=div("display:flex;align-items:center;gap:8px;padding:4px 2px 8px");
+    ap(head,mk("div","font-size:22px;font-weight:900;color:"+s[2]+";line-height:1",String(list.length)),mk("div","font-size:13px;font-weight:700;color:#f1f5f9",s[1]));
+    ap(col,head);
+    var bar=div("height:3px;background:#1a2d50;border-radius:2px;margin:0 2px 10px;overflow:hidden");ap(bar,mk("div","height:100%;background:"+s[2]+";width:"+Math.round(list.length/total*100)+"%"));ap(col,bar);
+    var body=div("display:flex;flex-direction:column;gap:8px");
+    if(list.length===0)ap(body,mk("div","color:#475569;font-size:12px;text-align:center;padding:14px;border:1px dashed #1a2d50;border-radius:8px","No one here yet"));
+    list.forEach(function(c){body.appendChild(pipeCard(c,s[2]));});
+    ap(col,body);board.appendChild(col);
+  });
+  ap(wrap,board);
+  if(PIPE.detailId!=null)wrap.appendChild(buildPipeDrawer());
+  if(PADD)wrap.appendChild(buildPipeAddModal());
+  return wrap;
+}
+function pipeCard(c,accent){
+  var b=mk("button","width:100%;background:#080f1e;border:1px solid #1a2d50;border-left:3px solid "+accent+";border-radius:8px;padding:11px 12px;text-align:left;cursor:pointer");
+  ap(b,mk("div","font-weight:700;font-size:14px;color:#f1f5f9",pipeName(c)));
+  var meta=div("font-size:11px;color:#64748b;margin-top:3px;display:flex;gap:6px;flex-wrap:wrap;align-items:center");
+  if(c.source)ap(meta,mk("span","background:#0b1527;border:1px solid #1a2d50;border-radius:99px;padding:1px 7px;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#94a3b8",c.source));
+  if(c.relationship)ap(meta,mk("span",null,c.relationship));
+  if(c.phone)ap(meta,mk("span",null,c.phone));
+  if(ADMIN_MODE&&PIPE.locMap[c.location_id])ap(meta,mk("span","color:#60a5fa",PIPE.locMap[c.location_id]));
+  b.appendChild(meta);b.onclick=function(){pipeOpen(c.id);};return b;
+}
+function buildPipeDrawer(){
+  var root=div("");
+  var scrim=mk("div","position:fixed;inset:0;background:rgba(2,6,15,.6);z-index:800");scrim.onclick=pipeClose;
+  var mob=window.innerWidth<=720;
+  var panel=div(mob?"position:fixed;left:0;right:0;bottom:0;height:88vh;background:#060c18;border-top:1px solid #1a2d50;border-radius:16px 16px 0 0;z-index:801;display:flex;flex-direction:column":"position:fixed;top:0;right:0;height:100%;width:420px;max-width:100%;background:#060c18;border-left:1px solid #1a2d50;z-index:801;display:flex;flex-direction:column");
+  var c=null,i;for(i=0;i<PIPE.contacts.length;i++)if(PIPE.contacts[i].id===PIPE.detailId)c=PIPE.contacts[i];
+  if(!c){root.appendChild(scrim);return root;}
+  var hd=div("background:#080f1e;border-bottom:1px solid #1a2d50;padding:16px 18px;position:relative;flex-shrink:0");
+  var cl=mk("button","position:absolute;top:12px;right:12px;background:#1a2d50;color:#fff;border:none;width:30px;height:30px;border-radius:7px;font-size:18px;cursor:pointer","×");cl.onclick=pipeClose;
+  ap(hd,mk("div","font-size:20px;font-weight:800;color:#f1f5f9;padding-right:34px",pipeName(c)),cl);
+  var cline=[];if(c.email)cline.push(c.email);if(c.phone)cline.push(c.phone);if(c.relationship)cline.push(c.relationship);
+  ap(hd,mk("div","font-size:12px;color:#64748b;margin-top:4px",cline.join("  ·  ")||"No contact info yet"));
+  var body=div("flex:1;overflow-y:auto;padding:16px 18px 40px");
+
+  if(PIPE.detailLoading||!PIPE.detail){
+    ap(body,mk("div","color:#64748b;font-size:13px;text-align:center;padding:30px","Loading..."));
+    ap(panel,hd,body);root.appendChild(scrim);root.appendChild(panel);return root;
+  }
+  var ro=ADMIN_READONLY;
+  /* Stage */
+  var secH=function(t){return mk("div","font-size:10px;color:#64748b;font-weight:700;letter-spacing:.09em;text-transform:uppercase;margin:0 0 9px",t);};
+  var stageSec=div("margin-bottom:20px");ap(stageSec,secH("Stage"));
+  var srow=div("display:flex;gap:6px;flex-wrap:wrap");
+  STAGES.forEach(function(s){
+    var on=c.stage===s[0];
+    var chip=mk("button","padding:7px 12px;border-radius:99px;font-size:12px;font-weight:700;cursor:"+(ro?"default":"pointer")+";border:1.5px solid "+(on?s[2]:"#1a2d50")+";background:"+(on?s[2]:"transparent")+";color:"+(on?"#060c18":"#94a3b8"),s[1].replace(/s$/,""));
+    if(!ro&&!on)chip.onclick=(function(k){return function(){pipeMove(c.id,k);};})(s[0]);
+    srow.appendChild(chip);
+  });
+  ap(stageSec,srow);ap(body,stageSec);
+  /* Membership */
+  var memSec=div("margin-bottom:20px");ap(memSec,secH("Membership"));
+  if(PIPE.detail.mem){var m=PIPE.detail.mem;ap(memSec,mk("span","display:inline-flex;align-items:center;gap:6px;background:rgba(52,211,153,.14);color:#34d399;font-weight:700;font-size:12px;padding:6px 12px;border-radius:99px","● "+(m.plan_name||"Member")+" · $"+(m.price_cents/100).toFixed(0)+"/"+m.billing_interval));}
+  else ap(memSec,mk("div","color:#64748b;font-size:13px","No active membership"));
+  ap(body,memSec);
+  /* Follow-ups */
+  var taskSec=div("margin-bottom:20px");ap(taskSec,secH("Follow-ups"));
+  var today=new Date().toISOString().slice(0,10);
+  if(PIPE.detail.tasks.length){
+    PIPE.detail.tasks.forEach(function(t){
+      var row=div("display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #1a2d50");
+      var cb=mk("input");cb.type="checkbox";cb.checked=!!t.done;cb.style.cssText="margin-top:2px;width:17px;height:17px;accent-color:#34d399;cursor:pointer";if(ro)cb.disabled=true;else cb.onchange=(function(tid){return function(){pipeToggleTask(tid,this.checked);};})(t.id);
+      var main=div("flex:1");
+      ap(main,mk("div","font-size:14px;color:"+(t.done?"#64748b":"#f1f5f9")+";"+(t.done?"text-decoration:line-through":""),t.title));
+      if(t.due_date){var od=!t.done&&t.due_date<today;ap(main,mk("div","font-size:11px;margin-top:1px;color:"+(od?"#f87171":"#64748b")+";font-weight:"+(od?"700":"400"),"Due "+t.due_date+(od?" · overdue":"")));}
+      ap(row,cb,main);taskSec.appendChild(row);
+    });
+  }else ap(taskSec,mk("div","color:#475569;font-size:12px;padding:10px 0","No follow-ups. Add one so this contact doesn't go cold."));
+  if(!ro){
+    var qrow=div("display:flex;gap:6px;margin-top:10px;flex-wrap:wrap");
+    var tin=mk("input");tin.placeholder="New follow-up...";tin.style.cssText="flex:1;min-width:120px;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:9px 11px;color:#f1f5f9;font-size:13px";
+    var din=mk("input");din.type="date";din.style.cssText="background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:9px 11px;color:#94a3b8;font-size:13px";
+    var tbtn=mk("button","background:#1a2d50;color:#f1f5f9;border:none;border-radius:8px;padding:9px 14px;font-weight:700;font-size:13px;cursor:pointer","Add");
+    tbtn.onclick=(function(cid){return function(){pipeAddTask(cid,tin.value.trim(),din.value);};})(c.id);
+    ap(qrow,tin,din,tbtn);ap(taskSec,qrow);
+  }
+  ap(body,taskSec);
+  /* Activity */
+  var actSec=div("margin-bottom:8px");ap(actSec,secH("Activity"));
+  if(PIPE.detail.acts.length){
+    PIPE.detail.acts.forEach(function(a){
+      var row=div("display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #1a2d50");
+      ap(row,mk("div","width:8px;height:8px;border-radius:50%;margin-top:5px;flex-shrink:0;background:"+(ACTC[a.type]||"#94a3b8")));
+      var tb=div("flex:1;min-width:0");
+      ap(tb,mk("div","font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#94a3b8",(a.type||"note").replace("_"," ")));
+      if(a.body)ap(tb,mk("div","font-size:13px;color:#f1f5f9;margin-top:1px;word-break:break-word",a.body));
+      ap(tb,mk("div","font-size:11px;color:#475569;margin-top:2px",timeAgo(a.created_at)+(a.created_by?" · "+a.created_by:"")));
+      ap(row,tb);actSec.appendChild(row);
+    });
+  }else ap(actSec,mk("div","color:#475569;font-size:12px;padding:10px 0","No history yet. Log the first touch below."));
+  if(!ro){
+    var trow=div("display:flex;gap:6px;margin-top:10px");
+    var tsel=mk("select");tsel.style.cssText="background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:9px 11px;color:#f1f5f9;font-size:13px";
+    [["note","Note"],["call","Call"],["text","Text"],["email","Email"],["meeting","Meeting"],["eval","Eval"]].forEach(function(o){var op=mk("option",null,o[1]);op.value=o[0];tsel.appendChild(op);});
+    ap(trow,tsel);ap(actSec,trow);
+    var brow=div("display:flex;gap:6px;margin-top:6px");
+    var bin=mk("input");bin.placeholder="What happened?";bin.style.cssText="flex:1;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:9px 11px;color:#f1f5f9;font-size:13px";
+    var lbtn=mk("button","background:#dc2626;color:#fff;border:none;border-radius:8px;padding:9px 16px;font-weight:700;font-size:13px;cursor:pointer","Log");
+    lbtn.onclick=(function(cid){return function(){pipeAddActivity(cid,tsel.value,bin.value.trim());};})(c.id);
+    ap(brow,bin,lbtn);ap(actSec,brow);
+  }
+  ap(body,actSec);
+  if(c.notes){var nSec=div("margin-top:20px");ap(nSec,secH("Notes"),mk("div","font-size:13px;color:#cbd5e1;line-height:1.5",c.notes));ap(body,nSec);}
+  ap(panel,hd,body);root.appendChild(scrim);root.appendChild(panel);return root;
+}
+function buildPipeAddModal(){
+  var root=div("");
+  var scrim=mk("div","position:fixed;inset:0;background:rgba(2,6,15,.7);z-index:820");scrim.onclick=pipeAddClose;
+  var card=div("position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:460px;max-width:calc(100% - 24px);max-height:88vh;overflow-y:auto;background:#0b1527;border:1px solid #1a2d50;border-radius:14px;z-index:821");
+  var hd=div("background:#080f1e;border-bottom:1px solid #1a2d50;padding:15px 18px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0");
+  var cl=mk("button","background:#1a2d50;color:#fff;border:none;width:28px;height:28px;border-radius:7px;font-size:17px;cursor:pointer","×");cl.onclick=pipeAddClose;
+  ap(hd,mk("div","font-size:16px;font-weight:800;color:#f1f5f9","Add contact"),cl);ap(card,hd);
+  var bd=div("padding:16px 18px");
+  var IS="width:100%;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:10px 12px;color:#f1f5f9;font-size:14px";
+  var mkField=function(key,label,type){var f=div("margin-bottom:12px");ap(f,lbl(label));var inp=mk("input");if(type)inp.type=type;inp.style.cssText=IS;inp.value=PADD[key]||"";inp.addEventListener("input",function(){PADD[key]=this.value;});ap(f,inp);return f;};
+  var mkSelect=function(key,label,opts){var f=div("margin-bottom:12px");ap(f,lbl(label));var sel=mk("select");sel.style.cssText=IS;opts.forEach(function(o){var val=(typeof o==="object")?o[0]:o,txt=(typeof o==="object")?o[1]:o;var op=mk("option",null,txt);op.value=val;if(PADD[key]===val)op.selected=true;sel.appendChild(op);});sel.addEventListener("change",function(){PADD[key]=this.value;});ap(f,sel);return f;};
+  var r1=div("display:grid;grid-template-columns:1fr 1fr;gap:10px");ap(r1,mkField("first_name","First name"),mkField("last_name","Last name"));ap(bd,r1);
+  var r2=div("display:grid;grid-template-columns:1fr 1fr;gap:10px");ap(r2,mkField("email","Email","email"),mkField("phone","Phone"));ap(bd,r2);
+  var r3=div("display:grid;grid-template-columns:1fr 1fr;gap:10px");ap(r3,mkSelect("relationship","Relationship",["","Parent","Guardian","Self","Coach","Other"]),mkSelect("source","Source",["","Walk-in","Referral","Web","Event","Social","Other"]));ap(bd,r3);
+  var athOpts=[["","— none —"]];S.athletes.forEach(function(a){athOpts.push([String(a._dbid),a.name||("Athlete #"+a._dbid)]);});
+  var r4=div("display:grid;grid-template-columns:1fr 1fr;gap:10px");ap(r4,mkSelect("stage","Stage",[["lead","Lead"],["trial","Trial"],["active","Active"],["inactive","Inactive"],["lost","Lost"]]),mkSelect("athlete_id","Link athlete",athOpts));ap(bd,r4);
+  var nf=div("margin-bottom:12px");ap(nf,lbl("Notes"));var nta=mk("textarea");nta.style.cssText=IS+";resize:vertical;min-height:60px";nta.value=PADD.notes||"";nta.addEventListener("input",function(){PADD.notes=this.value;});ap(nf,nta);ap(bd,nf);
+  if(PADD.err)ap(bd,mk("div","color:#f87171;font-size:13px;margin-bottom:10px",PADD.err));
+  var foot=div("display:flex;gap:10px;justify-content:flex-end;margin-top:4px");
+  var cancel=mk("button","background:transparent;border:1px solid #1a2d50;color:#94a3b8;border-radius:8px;padding:10px 16px;font-weight:700;font-size:13px;cursor:pointer","Cancel");cancel.onclick=pipeAddClose;
+  var save=mk("button","background:#dc2626;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-weight:700;font-size:13px;cursor:pointer","Save contact");save.onclick=pipeSaveContact;
+  ap(foot,cancel,save);ap(bd,foot);ap(card,bd);
+  root.appendChild(scrim);root.appendChild(card);return root;
+}
+/* ══════════════════ END PIPELINE ══════════════════ */
+
 function buildContent(){
   var c=div("flex:1;display:flex;overflow:hidden");
   if(S.tab==="roster")c.appendChild(buildRoster());
   else if(S.tab==="score")c.appendChild(buildScore());
   else if(S.tab==="analytics")c.appendChild(buildAnalytics());
+  else if(S.tab==="pipeline")c.appendChild(buildPipeline());
   else if(!ADMIN_READONLY)c.appendChild(buildAdd());
   return c;
 }
