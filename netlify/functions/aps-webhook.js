@@ -68,12 +68,32 @@ async function createAthlete(meta) {
   return rows[0];
 }
 
-async function convertLeadToActive(meta, athleteId) {
+async function findLeadForConversion(meta) {
   var locationId = parseInt(meta.locationId) || null;
+  if (!locationId) return null;
+
+  // Preferred path: match on the exact lead the signup form captured,
+  // recorded at lead-creation time and passed through Stripe metadata.
+  // This is reliable even when email/phone were still blank when the
+  // lead row was first created (the common case, since those fields
+  // sit lower on the form than name/DOB).
+  var leadId = parseInt(meta.leadId) || null;
+  if (leadId) {
+    var byIdRes = await fetch(
+      `${SB_URL}/rest/v1/aps_contacts?id=eq.${leadId}&location_id=eq.${locationId}&select=id,stage`,
+      { headers: SB_HEADERS }
+    );
+    if (byIdRes.ok) {
+      var byIdMatches = await byIdRes.json();
+      if (byIdMatches.length) return byIdMatches[0];
+    }
+  }
+
+  // Fallback for older sessions without a leadId in metadata: match on
+  // email/phone as before.
   var email = (meta.athleteEmail || "").trim();
   var phone = (meta.athletePhone || "").trim();
-
-  if (!locationId || (!email && !phone)) return null;
+  if (!email && !phone) return null;
 
   var filters = [];
   if (email) filters.push("email.eq." + encodeURIComponent(email));
@@ -87,13 +107,27 @@ async function convertLeadToActive(meta, athleteId) {
   if (!lookupRes.ok) return null;
 
   var matches = await lookupRes.json();
-  if (!matches.length) return null;
+  return matches.length ? matches[0] : null;
+}
 
-  var lead = matches[0];
+async function convertLeadToActive(meta, athleteId) {
+  var locationId = parseInt(meta.locationId) || null;
+  var email = (meta.athleteEmail || "").trim();
+  var phone = (meta.athletePhone || "").trim();
+
+  var lead = await findLeadForConversion(meta);
+  if (!lead) return null;
+
+  // Backfill email/phone onto the lead in case they were still blank when
+  // the lead was first created (matched here via leadId, not email/phone).
+  var patchBody = { stage: "active", athlete_id: athleteId };
+  if (email) patchBody.email = email;
+  if (phone) patchBody.phone = phone;
+
   var updateRes = await fetch(`${SB_URL}/rest/v1/aps_contacts?id=eq.${lead.id}`, {
     method: "PATCH",
     headers: SB_HEADERS,
-    body: JSON.stringify({ stage: "active", athlete_id: athleteId })
+    body: JSON.stringify(patchBody)
   });
   if (!updateRes.ok) return null;
 
