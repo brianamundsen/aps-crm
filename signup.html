@@ -58,19 +58,17 @@
       <div class="section-title">Athlete Information</div>
       <label>Full Name *</label>
       <input type="text" id="name" placeholder="First and Last Name">
-      <div class="row">
-        <div>
-          <label>Date of Birth *</label>
-          <input type="date" id="dob">
-        </div>
-        <div>
-          <label>Gender *</label>
-          <select id="gender">
-            <option value="Boys">Male</option>
-            <option value="Girls">Female</option>
-          </select>
-        </div>
+      <label>Date of Birth *</label>
+      <div class="row3" style="display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:8px;margin-bottom:14px">
+        <select id="dob-month"></select>
+        <select id="dob-day"></select>
+        <select id="dob-year"></select>
       </div>
+      <label>Gender *</label>
+      <select id="gender">
+        <option value="Boys">Male</option>
+        <option value="Girls">Female</option>
+      </select>
       <label>Email</label>
       <input type="email" id="email" placeholder="parent@email.com">
       <label>Phone</label>
@@ -87,6 +85,58 @@
 var LOCATION_CODE = (new URLSearchParams(window.location.search).get("location") || "").toUpperCase().trim();
 var selectedProgramId = null;
 var locationData = null;
+
+var MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function daysInMonth(month, year) {
+  return new Date(year, month, 0).getDate();
+}
+
+function populateDobDropdowns() {
+  var monthSel = document.getElementById("dob-month");
+  var daySel = document.getElementById("dob-day");
+  var yearSel = document.getElementById("dob-year");
+
+  monthSel.innerHTML = '<option value="">Month</option>' +
+    MONTH_NAMES.map(function(m, i) { return '<option value="' + (i + 1) + '">' + m + '</option>'; }).join("");
+
+  var currentYear = new Date().getFullYear();
+  // Most youth athletes are roughly 3-19 years old; newest years first for fast scrolling to a typical birth year
+  var startYear = currentYear - 3;
+  var endYear = currentYear - 25;
+  var yearOptions = '<option value="">Year</option>';
+  for (var y = startYear; y >= endYear; y--) {
+    yearOptions += '<option value="' + y + '">' + y + '</option>';
+  }
+  yearSel.innerHTML = yearOptions;
+
+  function refreshDays() {
+    var month = parseInt(monthSel.value) || 1;
+    var year = parseInt(yearSel.value) || currentYear;
+    var numDays = daysInMonth(month, year);
+    var prevVal = daySel.value;
+    var dayOptions = '<option value="">Day</option>';
+    for (var d = 1; d <= numDays; d++) {
+      dayOptions += '<option value="' + d + '">' + d + '</option>';
+    }
+    daySel.innerHTML = dayOptions;
+    if (prevVal && parseInt(prevVal) <= numDays) { daySel.value = prevVal; }
+  }
+
+  monthSel.onchange = refreshDays;
+  yearSel.onchange = refreshDays;
+  refreshDays();
+}
+
+function getDobValue() {
+  var m = document.getElementById("dob-month").value;
+  var d = document.getElementById("dob-day").value;
+  var y = document.getElementById("dob-year").value;
+  if (!m || !d || !y) return "";
+  var mm = String(m).padStart(2, "0");
+  var dd = String(d).padStart(2, "0");
+  return y + "-" + mm + "-" + dd;
+}
 
 async function loadPrograms() {
   try {
@@ -126,7 +176,7 @@ async function startCheckout() {
   err.style.display = "none";
   if (!selectedProgramId) { err.textContent = "Please select a program."; err.style.display = "block"; return; }
   var name = document.getElementById("name").value.trim();
-  var dob = document.getElementById("dob").value;
+  var dob = getDobValue();
   if (!name || !dob) { err.textContent = "Name and date of birth are required."; err.style.display = "block"; return; }
 
   var btn = document.getElementById("signup-btn");
@@ -159,6 +209,7 @@ async function startCheckout() {
   }
 }
 
+populateDobDropdowns();
 if (LOCATION_CODE) { loadPrograms(); }
 else { document.getElementById("loading").textContent = "No location specified in URL."; }
 </script>
