@@ -124,7 +124,8 @@ function populateDobDropdowns() {
   }
 
   monthSel.onchange = refreshDays;
-  yearSel.onchange = refreshDays;
+  yearSel.onchange = function() { refreshDays(); maybeCreateLead(); };
+  daySel.onchange = maybeCreateLead;
   refreshDays();
 }
 
@@ -136,6 +137,31 @@ function getDobValue() {
   var mm = String(m).padStart(2, "0");
   var dd = String(d).padStart(2, "0");
   return y + "-" + mm + "-" + dd;
+}
+
+var leadCreated = false;
+
+function maybeCreateLead() {
+  if (leadCreated) return; // only fire once per session
+  var name = document.getElementById("name").value.trim();
+  var dob = getDobValue();
+  if (!name || !dob || !locationData) return;
+
+  leadCreated = true; // set immediately to avoid duplicate calls from rapid blur events
+
+  fetch("/.netlify/functions/aps-create-lead", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      locationId: locationData.id,
+      athleteName: name,
+      email: document.getElementById("email").value.trim(),
+      phone: document.getElementById("phone").value.trim()
+    })
+  }).catch(function(e) {
+    // Non-fatal: lead capture failing should never block signup/payment
+    console.error("Lead capture failed (non-fatal):", e.message);
+  });
 }
 
 async function loadPrograms() {
@@ -210,6 +236,7 @@ async function startCheckout() {
 }
 
 populateDobDropdowns();
+document.getElementById("name").onblur = maybeCreateLead;
 if (LOCATION_CODE) { loadPrograms(); }
 else { document.getElementById("loading").textContent = "No location specified in URL."; }
 </script>
