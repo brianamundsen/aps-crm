@@ -66,3 +66,43 @@ async function createAthlete(meta) {
 
   const rows = await res.json();
   return rows[0];
+}
+
+exports.handler = async (event) => {
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+  const sig = event.headers["stripe-signature"];
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  let stripeEvent;
+  try {
+    stripeEvent = stripe.webhooks.constructEvent(event.body, sig, webhookSecret);
+  } catch (err) {
+    console.error("Webhook signature verification failed:", err.message);
+    return {
+      statusCode: 400,
+      body: `Webhook Error: ${err.message}`
+    };
+  }
+
+  try {
+    if (stripeEvent.type === "checkout.session.completed") {
+      const session = stripeEvent.data.object;
+      const meta = session.metadata || {};
+
+      const athlete = await createAthlete(meta);
+
+      console.log("Athlete created from checkout session:", athlete && athlete.id);
+    }
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ received: true })
+    };
+  } catch (err) {
+    console.error("Webhook handler error:", err.message);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: err.message })
+    };
+  }
+};
