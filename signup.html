@@ -140,6 +140,7 @@ function getDobValue() {
 }
 
 var leadCreated = false;
+var capturedLeadId = null;
 
 function maybeCreateLead() {
   if (leadCreated) return; // only fire once per session
@@ -158,10 +159,17 @@ function maybeCreateLead() {
       email: document.getElementById("email").value.trim(),
       phone: document.getElementById("phone").value.trim()
     })
-  }).catch(function(e) {
-    // Non-fatal: lead capture failing should never block signup/payment
-    console.error("Lead capture failed (non-fatal):", e.message);
-  });
+  }).then(function(res) { return res.json(); })
+    .then(function(data) {
+      // Email/phone are often still blank at this point (user hasn't reached
+      // those fields yet), so hang onto the leadId and match on that at
+      // checkout time instead of relying on email/phone lookup later.
+      if (data && data.leadId) { capturedLeadId = data.leadId; }
+    })
+    .catch(function(e) {
+      // Non-fatal: lead capture failing should never block signup/payment
+      console.error("Lead capture failed (non-fatal):", e.message);
+    });
 }
 
 async function loadPrograms() {
@@ -215,6 +223,7 @@ async function startCheckout() {
       body: JSON.stringify({
         locationCode: LOCATION_CODE,
         programId: selectedProgramId,
+        leadId: capturedLeadId || "",
         athleteData: {
           name: name,
           dob: dob,
