@@ -68,6 +68,54 @@ async function createAthlete(meta) {
   return rows[0];
 }
 
+async function convertLeadToActive(meta, athleteId) {
+  var locationId = parseInt(meta.locationId) || null;
+  var email = (meta.athleteEmail || "").trim();
+  var phone = (meta.athletePhone || "").trim();
+
+  if (!locationId || (!email && !phone)) return null;
+
+  var filters = [];
+  if (email) filters.push("email.eq." + encodeURIComponent(email));
+  if (phone) filters.push("phone.eq." + encodeURIComponent(phone));
+  var orFilter = "or=(" + filters.join(",") + ")";
+
+  var lookupRes = await fetch(
+    `${SB_URL}/rest/v1/aps_contacts?location_id=eq.${locationId}&${orFilter}&select=id,stage`,
+    { headers: SB_HEADERS }
+  );
+  if (!lookupRes.ok) return null;
+
+  var matches = await lookupRes.json();
+  if (!matches.length) return null;
+
+  var lead = matches[0];
+  var updateRes = await fetch(`${SB_URL}/rest/v1/aps_contacts?id=eq.${lead.id}`, {
+    method: "PATCH",
+    headers: SB_HEADERS,
+    body: JSON.stringify({ stage: "active", athlete_id: athleteId })
+  });
+  if (!updateRes.ok) return null;
+
+  // Log the stage change in aps_activities, matching the existing activity pattern
+  try {
+    await fetch(`${SB_URL}/rest/v1/aps_activities`, {
+      method: "POST",
+      headers: SB_HEADERS,
+      body: JSON.stringify({
+        location_id: locationId,
+        contact_id: lead.id,
+        type: "stage_change",
+        body: (lead.stage || "lead") + " -> active (payment completed)"
+      })
+    });
+  } catch (e) {
+    console.error("Activity log failed (non-fatal):", e.message);
+  }
+
+  return lead.id;
+}
+
 exports.handler = async (event) => {
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
   const sig = event.headers["stripe-signature"];
@@ -90,8 +138,17 @@ exports.handler = async (event) => {
       const meta = session.metadata || {};
 
       const athlete = await createAthlete(meta);
-
       console.log("Athlete created from checkout session:", athlete && athlete.id);
+
+      try {
+        const linkedLeadId = await convertLeadToActive(meta, athlete.id);
+        if (linkedLeadId) {
+          console.log("Linked existing lead to new athlete:", linkedLeadId);
+        }
+      } catch (leadErr) {
+        // Non-fatal: athlete was already created successfully, don't fail the whole webhook
+        console.error("Lead conversion failed (non-fatal):", leadErr.message);
+      }
     }
 
     return {
