@@ -33,7 +33,7 @@ exports.handler = async function(event) {
   let body;
   try { body = JSON.parse(event.body); } catch { return { statusCode: 400, body: "Invalid JSON" }; }
 
-  const { locationCode, programId, athleteData } = body;
+  const { locationCode, programId, athleteData, leadId } = body;
   if (!locationCode || !programId || !athleteData?.name) {
     return { statusCode: 400, body: "locationCode, programId, and athleteData.name required" };
   }
@@ -79,7 +79,8 @@ exports.handler = async function(event) {
         athleteDob: athleteData.dob || "",
         athleteGender: athleteData.gender || "",
         athleteEmail: athleteData.email || "",
-        athletePhone: athleteData.phone || ""
+        athletePhone: athleteData.phone || "",
+        leadId: leadId || ""
       }
     });
 
