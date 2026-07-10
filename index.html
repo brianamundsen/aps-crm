@@ -43,32 +43,46 @@ function toast(msg,ok){var t=document.getElementById("toast");t.textContent=msg;
 
 /* ── URL params ── */
 var params=new URLSearchParams(window.location.search);
+var LOCATION_CODE=(params.get("location")||"").toUpperCase().trim();
 var SHARE_ID=params.get("athlete")?parseInt(params.get("athlete")):null;
-var LOCATION={id:null,name:"APS Demo",code:"APS"};
-var LOCATION_CODE="APS";
+var LOCATION={id:null,name:"",code:""};
 var ADMIN_MODE=false;
+var ADMIN_READONLY=false;
+var ADMIN_PASSWORD="Amundsen2026";
 var S_LOC_FILTER=null;
-
-var ADMIN_PASSWORD="APSAdmin2026"; // change this to your preferred corporate password
-var S_LOC_FILTER=null; // null = all locations in admin mode
 
 /* ── DB ── */
 async function apiGet(path){var r=await fetch(SB_URL+"/rest/v1/"+path,{headers:HDRS});var t=await r.text();if(!r.ok)throw new Error("HTTP "+r.status+" "+t);return JSON.parse(t);}
 async function apiPost(table,body){var r=await fetch(SB_URL+"/rest/v1/"+table,{method:"POST",headers:HDRS,body:JSON.stringify(body)});var t=await r.text();if(!r.ok)throw new Error("HTTP "+r.status+" "+t);return JSON.parse(t);}
 async function apiDelete(table,filter){var r=await fetch(SB_URL+"/rest/v1/"+table+"?"+filter,{method:"DELETE",headers:HDRS});if(!r.ok){var t=await r.text();throw new Error("HTTP "+r.status+" "+t);}}
 
+async function loadLocation(){
+  var rows=await apiGet("aps_locations?code=eq."+LOCATION_CODE+"&select=*");
+  if(!rows.length)return false;
+  LOCATION=rows[0];return true;
+}
+async function createLocation(name,code,password){
+  var rows=await apiPost("aps_locations",{name:name,code:code.toUpperCase(),password:password||""});
+  LOCATION=rows[0];return LOCATION;
+}
+async function dbLoadAllLocations(){return await apiGet("aps_locations?select=*&order=id.asc");}
+
 async function dbLoadAthletes(){
-  var rows=await apiGet("aps_athletes?select=*&order=id.asc");
-  return rows.map(function(r){var d=JSON.parse(r.info);d._dbid=r.id;
-    
-    return d;});
+  var path=ADMIN_MODE?"aps_athletes?select=*&order=id.asc":"aps_athletes?location_id=eq."+LOCATION.id+"&select=*&order=id.asc";
+  var rows=await apiGet(path);
+  if(ADMIN_MODE){
+    var locs=await dbLoadAllLocations();
+    var locMap={};locs.forEach(function(l){locMap[l.id]=l.name;});
+    return rows.map(function(r){var d=JSON.parse(r.info);d._dbid=r.id;d._locationId=r.location_id;d._locationName=locMap[r.location_id]||"Unknown";return normAthBJ(d);});
+  }
+  return rows.map(function(r){var d=JSON.parse(r.info);d._dbid=r.id;return normAthBJ(d);});
 }
 async function dbInsert(athData){
-  var rows=await apiPost("aps_athletes",{info:JSON.stringify(athData)});
+  var rows=await apiPost("aps_athletes",{location_id:LOCATION.id,info:JSON.stringify(athData)});
   var d=JSON.parse(rows[0].info);d._dbid=rows[0].id;return d;
 }
 async function dbUpdate(id,athData){
-  var r=await fetch(SB_URL+"/rest/v1/athletes?id=eq."+id,{method:"PATCH",headers:HDRS,body:JSON.stringify({info:JSON.stringify(athData)})});
+  var r=await fetch(SB_URL+"/rest/v1/aps_athletes?id=eq."+id,{method:"PATCH",headers:HDRS,body:JSON.stringify({info:JSON.stringify(athData)})});
   var t=await r.text();if(!r.ok)throw new Error("HTTP "+r.status+" "+t);
   var rows=JSON.parse(t);var d=JSON.parse(rows[0].info);d._dbid=rows[0].id;return d;
 }
@@ -92,10 +106,10 @@ var STD=[
   {g:"Boys",t:"Vertical Jump",a:"12-14",d:"H",ex:21,go:19,av:17,ba:14},
   {g:"Boys",t:"Vertical Jump",a:"15-17",d:"H",ex:25,go:23,av:21,ba:19},
   {g:"Boys",t:"Vertical Jump",a:"18-19",d:"H",ex:28,go:27,av:25,ba:23},
-  {g:"Boys",t:"Broad Jump",a:"9-11", d:"H",ex:6.4,go:5.8,av:5.2,ba:4.8},
-  {g:"Boys",t:"Broad Jump",a:"12-14",d:"H",ex:7.2,go:6.8,av:6.2,ba:5.6},
-  {g:"Boys",t:"Broad Jump",a:"15-17",d:"H",ex:8.6,go:7.8,av:7.0,ba:6.0},
-  {g:"Boys",t:"Broad Jump",a:"18-19",d:"H",ex:9.2,go:8.6,av:7.8,ba:6.8},
+  {g:"Boys",t:"Broad Jump",a:"9-11", d:"H",ex:77, go:70, av:62, ba:58 },
+  {g:"Boys",t:"Broad Jump",a:"12-14",d:"H",ex:86, go:82, av:74, ba:67 },
+  {g:"Boys",t:"Broad Jump",a:"15-17",d:"H",ex:103,go:94, av:84, ba:72 },
+  {g:"Boys",t:"Broad Jump",a:"18-19",d:"H",ex:110,go:103,av:94, ba:82 },
   {g:"Boys",t:"5-10-5 Agility",a:"9-11", d:"L",ex:5.2,go:5.6,av:6.1,ba:6.5},
   {g:"Boys",t:"5-10-5 Agility",a:"12-14",d:"L",ex:5,  go:5.3,av:5.8,ba:6.3},
   {g:"Boys",t:"5-10-5 Agility",a:"15-17",d:"L",ex:4.7,go:5,  av:5.4,ba:5.9},
@@ -116,10 +130,10 @@ var STD=[
   {g:"Girls",t:"Vertical Jump",a:"12-14",d:"H",ex:18,go:16,av:14,ba:13},
   {g:"Girls",t:"Vertical Jump",a:"15-17",d:"H",ex:20,go:17,av:15,ba:14},
   {g:"Girls",t:"Vertical Jump",a:"18-19",d:"H",ex:22,go:19,av:17,ba:16},
-  {g:"Girls",t:"Broad Jump",a:"9-11", d:"H",ex:6.4,go:5.8,av:5.2,ba:4.8},
-  {g:"Girls",t:"Broad Jump",a:"12-14",d:"H",ex:7.0,go:6.6,av:5.8,ba:5.0},
-  {g:"Girls",t:"Broad Jump",a:"15-17",d:"H",ex:7.6,go:7.0,av:6.4,ba:5.2},
-  {g:"Girls",t:"Broad Jump",a:"18-19",d:"H",ex:8.0,go:7.2,av:6.6,ba:5.6},
+  {g:"Girls",t:"Broad Jump",a:"9-11", d:"H",ex:77, go:70, av:62, ba:58 },
+  {g:"Girls",t:"Broad Jump",a:"12-14",d:"H",ex:84, go:79, av:70, ba:60 },
+  {g:"Girls",t:"Broad Jump",a:"15-17",d:"H",ex:91, go:84, av:77, ba:62 },
+  {g:"Girls",t:"Broad Jump",a:"18-19",d:"H",ex:96, go:86, av:79, ba:67 },
   {g:"Girls",t:"5-10-5 Agility",a:"9-11", d:"L",ex:5.2,go:5.6,av:6.1,ba:6.5},
   {g:"Girls",t:"5-10-5 Agility",a:"12-14",d:"L",ex:5,  go:5.4,av:5.9,ba:6.3},
   {g:"Girls",t:"5-10-5 Agility",a:"15-17",d:"L",ex:4.9,go:5.3,av:5.8,ba:6.1},
@@ -127,8 +141,11 @@ var STD=[
 ];
 var RATED=["10 yd split","20 yd split","40 yd dash","Vertical Jump","Broad Jump","5-10-5 Agility"];
 var ALL_T=RATED.concat(["Chin up Hold"]);
-var UNITS={"10 yd split":"sec","20 yd split":"sec","40 yd dash":"sec","Vertical Jump":"in","Broad Jump":"ft","5-10-5 Agility":"sec","Chin up Hold":"sec",};
+var UNITS={"10 yd split":"sec","20 yd split":"sec","40 yd dash":"sec","Vertical Jump":"in","Broad Jump":"in","5-10-5 Agility":"sec","Chin up Hold":"sec",};
 function dispName(t){return t==="Chin up Hold"?"Chin ups":t;}
+function fmtVal(t,val){if(t!=="Broad Jump"||val===""||val==null)return val;var v=parseFloat(val);if(isNaN(v))return val;var f=Math.floor(v/12),i=Math.round(v-f*12);if(i===12){f++;i=0;}return f+"\u2032"+i+"\u2033";}
+function normBJ(val){if(val===""||val==null)return val;var v=parseFloat(val);if(isNaN(v))return val;if(v>=15)return val;var parts=String(val).split(".");var ft=parseInt(parts[0])||0;var inch=parts[1]?parseInt(parts[1]):0;if(inch>11)inch=11;return String(ft*12+inch);}
+function normAthBJ(d){if(d.results&&d.results["Broad Jump"])d.results["Broad Jump"]=normBJ(d.results["Broad Jump"]);if(d.evaluations)d.evaluations.forEach(function(ev){if(ev.results&&ev.results["Broad Jump"])ev.results["Broad Jump"]=normBJ(ev.results["Broad Jump"]);});return d;}
 var SHORT=["10yd","20yd","40yd","VJ","BJ","505"];
 var AGS=["9-11","12-14","15-17","18-19"];
 var RC={Excellent:"#22c55e",Good:"#38bdf8",Average:"#f59e0b","Below Avg":"#f87171"};
@@ -149,7 +166,7 @@ function parisiPts(test,value,unit){
   else if(test==="20 yd split") pts=Math.round(166-(v-2.50)/0.01);
   else if(test==="40 yd dash")  pts=Math.round(166-(v-4.50)/0.01);
   else if(test==="Vertical Jump")pts=Math.round(4*v+6);
-  else if(test==="Broad Jump")  pts=Math.round(20*v-74);
+  else if(test==="Broad Jump")  pts=Math.round(v*5/3-74);
   else if(test==="5-10-5 Agility")pts=Math.round(166-(v-4.25)/0.01);
   else if(test==="Chin up Hold"){if(unit!=="reps")return null;pts=Math.round(v*5);max=100;}
   else return null;
@@ -195,7 +212,7 @@ function getParisiTotal(ath,disp){
 function blankR(){var r={};ALL_T.forEach(function(t){r[t]="";});return r;}
 
 /* ── STATE ── */
-var S={athletes:[],tab:"roster",selId:null,sTest:"40 yd dash",aTest:"40 yd dash",aGen:"All",loading:true,saving:false,viewEvalIdx:null};
+var S={athletes:[],tab:"roster",selId:null,sTest:"40 yd dash",aTest:"40 yd dash",aGen:"All",loading:true,saving:false,viewEvalIdx:null,screen:"loading"};
 var FORM={name:"",age:"",gender:"Boys",height:"",weight:"",date:"",program:"",notes:"",goals:"",results:blankR(),_mode:"new",_editId:null};
 function clearForm(){FORM.name="";FORM.age="";FORM.gender="Boys";FORM.height="";FORM.weight="";FORM.date="";FORM.program="";FORM.notes="";FORM.goals="";FORM.results=blankR();FORM._mode="new";FORM._editId=null;FORM.chinUpUnit="reps";}
 function ensureEvaluations(ath){
@@ -204,13 +221,16 @@ function ensureEvaluations(ath){
   }
   return ath.evaluations;
 }
-function filteredAthletes(){return S.athletes;}
+function filteredAthletes(){
+  if(!ADMIN_MODE||S_LOC_FILTER===null)return S.athletes;
+  return S.athletes.filter(function(a){return a._locationId===S_LOC_FILTER;});
+}
 
 /* ── ACTIONS ── */
 function loadAthletes(){
   dbLoadAthletes().then(function(rows){
     S.athletes=rows;
-    S.loading=false;render();
+    S.loading=false;S.screen=(SHARE_ID!==null)?"share":"app";render();
   }).catch(function(err){S.loading=false;toast("Load failed: "+err.message,false);render();});
 }
 function saveAthlete(athData){
@@ -333,7 +353,7 @@ function buildShareView(){
 
   var rg=div("card");rg.className="card";rg.appendChild(ctitle("Test Results"));
   var grid=div("display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-top:6px");
-  RATED.forEach(function(t){var val=disp.results[t],r=getRat(ath.gender,t,ag,val),n=getNrm(ath.gender,t,ag,val),s=getS(ath.gender,t,ag);var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid "+(r?RC[r]+"55":"#2a1818"));var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em",t),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#475569"),val||"—"));if(val)ap(vrow,mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,top,vrow);if(n!==null){var sh=div("display:flex;justify-content:space-between;margin-top:5px;margin-bottom:2px");ap(sh,mk("span","font-size:10px;color:#64748b","Score"),mk("span","font-size:10px;font-weight:700;font-family:'Courier New',monospace;color:"+(RC[r]||"#64748b"),n+"/100"));var pw=div("prog-wrap");pw.className="prog-wrap";var pb=div("prog");pb.className="prog";pb.style.cssText="width:"+Math.min(n,100)+"%;background:"+(RC[r]||"#4a2424");pw.appendChild(pb);ap(card,sh,pw);}if(s)ap(card,mk("p","margin-top:5px;font-size:10px;color:#475569",s.d==="L"?"Ex ≤"+s.ex+" · Gd ≤"+s.go:"Ex ≥"+s.ex+" · Gd ≥"+s.go));grid.appendChild(card);});
+  RATED.forEach(function(t){var val=disp.results[t],r=getRat(ath.gender,t,ag,val),n=getNrm(ath.gender,t,ag,val),s=getS(ath.gender,t,ag);var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid "+(r?RC[r]+"55":"#2a1818"));var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em",t),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#475569"),fmtVal(t,val)||"—"));if(val&&t!=="Broad Jump")ap(vrow,mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,top,vrow);if(n!==null){var sh=div("display:flex;justify-content:space-between;margin-top:5px;margin-bottom:2px");ap(sh,mk("span","font-size:10px;color:#64748b","Score"),mk("span","font-size:10px;font-weight:700;font-family:'Courier New',monospace;color:"+(RC[r]||"#64748b"),n+"/100"));var pw=div("prog-wrap");pw.className="prog-wrap";var pb=div("prog");pb.className="prog";pb.style.cssText="width:"+Math.min(n,100)+"%;background:"+(RC[r]||"#4a2424");pw.appendChild(pb);ap(card,sh,pw);}if(s)ap(card,mk("p","margin-top:5px;font-size:10px;color:#475569",s.d==="L"?"Ex ≤"+s.ex+" · Gd ≤"+s.go:"Ex ≥"+fmtVal(t,s.ex)+" · Gd ≥"+fmtVal(t,s.go)));grid.appendChild(card);});
   ["Chin up Hold"].forEach(function(t){var val=disp.results[t];if(!val)return;var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid #1a2d50");if(t==="Chin up Hold"){var unit=disp.chinUpUnit||ath.chinUpUnit||"sec";var r=getChinUpRat(ath.gender,val,unit);card.style.borderColor=r?RC[r]+"55":"#2a1818";var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em","Chin ups"),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#64748b"),val),mk("span","font-size:11px;color:#64748b",unit));ap(card,top,vrow);if(r){var sh=div("display:flex;justify-content:space-between;margin-top:5px");ap(sh,mk("span","font-size:10px;color:#64748b",unit==="sec"?"Any time = Below Avg":"Ex ≥16 (Boys) / ≥8 (Girls)"));card.appendChild(sh);}}else{var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:#64748b",val),mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px",dispName(t)),vrow);}grid.appendChild(card);});
   rg.appendChild(grid);body.appendChild(rg);
 
@@ -357,52 +377,488 @@ function buildShareView(){
 }
 
 /* ── SETUP SCREEN ── */
+function buildSetup(){
+  var wrap=div("flex:1;display:flex;align-items:center;justify-content:center;padding:20px");
+  var box=div("background:#0b1527;border:1px solid #1a2d50;border-radius:16px;padding:32px;max-width:420px;width:100%");
+  ap(box,mk("div","font-size:28px;font-weight:800;color:#f1f5f9;margin-bottom:4px","⚡ ATHLETE PERFORMANCE SCORE"),
+         mk("p","color:#64748b;font-size:13px;margin-bottom:28px","Select your location and enter your password to continue."));
 
+  var IS="width:100%;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:10px 12px;color:#e2e8f0;font-size:14px;outline:none;margin-bottom:14px;font-family:inherit";
 
+  var locSel=document.createElement("select");locSel.style.cssText=IS+"cursor:pointer";
+  var defaultOpt=document.createElement("option");defaultOpt.value="";defaultOpt.textContent="Loading locations...";defaultOpt.disabled=true;defaultOpt.selected=true;
+  locSel.appendChild(defaultOpt);
+
+  var passInp=mk("input",IS+"margin-bottom:6px");
+  passInp.type="password";passInp.placeholder="Password";
+
+  var errMsg=mk("p","color:#f87171;font-size:13px;margin-bottom:12px;display:none","");
+
+  var btn=mk("button","background:linear-gradient(135deg,#1d4ed8,#1e40af);border:none;border-radius:9px;padding:12px 28px;color:#fff;font-size:14px;font-weight:800;cursor:pointer;width:100%;margin-top:8px","Enter");
+  btn.onclick=function(){
+    var selLoc=locSel.value;
+    var pass=passInp.value;
+    if(!selLoc){errMsg.textContent="Please select a location.";errMsg.style.display="block";return;}
+    errMsg.style.display="none";
+
+    if(selLoc==="__ADMIN__"){
+      if(!pass){errMsg.textContent="Password required.";errMsg.style.display="block";return;}
+      if(pass!==ADMIN_PASSWORD){errMsg.textContent="Incorrect admin password.";errMsg.style.display="block";return;}
+      ADMIN_MODE=true;ADMIN_READONLY=true;S_LOC_FILTER=null;
+      LOCATION={id:null,name:"Admin (Read-Only)",code:"ADMIN"};
+      S.screen="loading";render();loadAthletes();return;
+    }
+
+    var loc=null;for(var i=0;i<locSel._locs.length;i++){if(String(locSel._locs[i].id)===selLoc){loc=locSel._locs[i];break;}}
+    if(!loc){errMsg.textContent="Location not found.";errMsg.style.display="block";return;}
+    if(!loc.password){LOCATION=loc;LOCATION_CODE=loc.code;S.screen="setpassword";render();return;}
+    if(!pass){errMsg.textContent="Password required.";errMsg.style.display="block";return;}
+    if(loc.password!==pass){errMsg.textContent="Incorrect password.";errMsg.style.display="block";return;}
+    ADMIN_MODE=false;ADMIN_READONLY=false;LOCATION=loc;LOCATION_CODE=loc.code;
+    window.history.replaceState({},"","?location="+loc.code);
+    S.screen="loading";render();loadAthletes();
+  };
+  passInp.addEventListener("keydown",function(e){if(e.key==="Enter")btn.click();});
+
+  ap(box,lbl("Location"),locSel,lbl("Password"),passInp,errMsg,btn);
+
+  var div2=mk("div","border-top:1px solid #1a2d50;margin:24px 0");
+  var newLink=div("font-size:13px;color:#64748b;text-align:center;cursor:pointer");
+  newLink.innerHTML="New location? <span style='color:#3b82f6;font-weight:600;text-decoration:underline'>Set one up →</span>";
+  newLink.onclick=function(){S.screen="register";render();};
+  ap(box,div2,newLink);
+  ap(wrap,box);
+
+  dbLoadAllLocations().then(function(locs){
+    locSel.innerHTML="";
+    var adminOpt=document.createElement("option");adminOpt.value="__ADMIN__";adminOpt.textContent="🔑 Admin (Read-Only)";
+    locSel.appendChild(adminOpt);
+    var sep=document.createElement("option");sep.disabled=true;sep.textContent="──────────────";locSel.appendChild(sep);
+    if(!locs.length){
+      var o=document.createElement("option");o.value="";o.textContent="No locations yet — set one up below";o.disabled=true;locSel.appendChild(o);
+    } else {
+      var o=document.createElement("option");o.value="";o.textContent="Select your location...";o.disabled=true;o.selected=true;locSel.appendChild(o);
+      locs.forEach(function(loc){var op=document.createElement("option");op.value=String(loc.id);op.textContent=loc.name;locSel.appendChild(op);});
+    }
+    locSel._locs=locs;
+  }).catch(function(){
+    locSel.innerHTML="";var o=document.createElement("option");o.value="";o.textContent="Error loading locations";o.disabled=true;o.selected=true;locSel.appendChild(o);
+    locSel._locs=[];
+  });
+
+  return wrap;
+}
+
+/* ── REGISTER NEW LOCATION ── */
+function buildRegister(){
+  var wrap=div("flex:1;display:flex;align-items:center;justify-content:center;padding:20px");
+  var box=div("background:#0b1527;border:1px solid #1a2d50;border-radius:16px;padding:32px;max-width:420px;width:100%");
+  ap(box,mk("div","font-size:22px;font-weight:800;color:#f1f5f9;margin-bottom:4px","New Location Setup"),
+         mk("p","color:#64748b;font-size:13px;margin-bottom:24px","Enter your location details and set a password."));
+  var IS="width:100%;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:10px 12px;color:#e2e8f0;font-size:14px;outline:none;margin-bottom:14px;font-family:inherit";
+  var nameInp=mk("input",IS);nameInp.placeholder="Location Name (e.g. Lincoln HS Football)";
+  var codeInp=mk("input",IS+"text-transform:uppercase");codeInp.placeholder="Location Code (e.g. LINCOLNHS)";
+  codeInp.addEventListener("input",function(){this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,"");});
+  var passInp=mk("input",IS);passInp.type="password";passInp.placeholder="Set a password";
+  var pass2Inp=mk("input",IS);pass2Inp.type="password";pass2Inp.placeholder="Confirm password";
+  var errMsg=mk("p","color:#f87171;font-size:13px;margin-bottom:12px;display:none","");
+  var btn=mk("button","background:linear-gradient(135deg,#1d4ed8,#1e40af);border:none;border-radius:9px;padding:12px 28px;color:#fff;font-size:14px;font-weight:800;cursor:pointer;width:100%","Create Location");
+  btn.onclick=function(){
+    var name=nameInp.value.trim(),code=codeInp.value.trim(),pass=passInp.value,pass2=pass2Inp.value;
+    if(!name||!code||!pass){errMsg.textContent="All fields required.";errMsg.style.display="block";return;}
+    if(pass!==pass2){errMsg.textContent="Passwords don't match.";errMsg.style.display="block";return;}
+    btn.textContent="Creating...";btn.disabled=true;
+    createLocation(name,code,pass).then(function(){
+      window.history.replaceState({},"","?location="+LOCATION.code);
+      LOCATION_CODE=LOCATION.code;
+      S.screen="loading";render();loadAthletes();
+    }).catch(function(err){
+      btn.textContent="Create Location";btn.disabled=false;
+      errMsg.textContent="Error: "+err.message;errMsg.style.display="block";
+    });
+  };
+  var backLink=mk("div","font-size:13px;color:#3b82f6;cursor:pointer;margin-top:16px;text-align:center","← Back to login");
+  backLink.onclick=function(){S.screen="setup";render();};
+  ap(box,lbl("Location Name"),nameInp,lbl("Location Code"),codeInp,lbl("Password"),passInp,lbl("Confirm Password"),pass2Inp,errMsg,btn,backLink);
+  ap(wrap,box);return wrap;
+}
+
+/* ── FIRST LOGIN — SET PASSWORD ── */
+function buildSetPassword(){
+  var wrap=div("flex:1;display:flex;align-items:center;justify-content:center;padding:20px");
+  var box=div("background:#0b1527;border:1px solid #1a2d50;border-radius:16px;padding:32px;max-width:420px;width:100%");
+  ap(box,mk("div","font-size:22px;font-weight:800;color:#f1f5f9;margin-bottom:4px","Welcome, "+LOCATION.name+"!"),
+         mk("p","color:#64748b;font-size:13px;margin-bottom:24px","First time logging in. Set a password for your location."));
+  var IS="width:100%;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:10px 12px;color:#e2e8f0;font-size:14px;outline:none;margin-bottom:14px;font-family:inherit";
+  var p1=mk("input",IS);p1.type="password";p1.placeholder="Create a password";
+  var p2=mk("input",IS);p2.type="password";p2.placeholder="Confirm password";
+  var errMsg=mk("p","color:#f87171;font-size:13px;margin-bottom:12px;display:none","");
+  var btn=mk("button","background:linear-gradient(135deg,#1d4ed8,#1e40af);border:none;border-radius:9px;padding:12px 28px;color:#fff;font-size:14px;font-weight:800;cursor:pointer;width:100%","Set Password & Enter");
+  btn.onclick=function(){
+    var pass=p1.value,pass2=p2.value;
+    if(!pass){errMsg.textContent="Password required.";errMsg.style.display="block";return;}
+    if(pass!==pass2){errMsg.textContent="Passwords don't match.";errMsg.style.display="block";return;}
+    btn.textContent="Saving...";btn.disabled=true;
+    fetch(SB_URL+"/rest/v1/aps_locations?id=eq."+LOCATION.id,{method:"PATCH",headers:HDRS,body:JSON.stringify({password:pass})})
+      .then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);LOCATION.password=pass;
+        window.history.replaceState({},"","?location="+LOCATION.code);
+        S.screen="loading";render();loadAthletes();
+      }).catch(function(err){btn.textContent="Set Password & Enter";btn.disabled=false;errMsg.textContent="Error: "+err.message;errMsg.style.display="block";});
+  };
+  p2.addEventListener("keydown",function(e){if(e.key==="Enter")btn.click();});
+  var backLink=mk("div","font-size:13px;color:#3b82f6;cursor:pointer;margin-top:16px;text-align:center","← Back to login");
+  backLink.onclick=function(){S.screen="setup";render();};
+  ap(box,lbl("New Password"),p1,lbl("Confirm Password"),p2,errMsg,btn,backLink);
+  ap(wrap,box);return wrap;
+}
 
 /* ── HEADER ── */
 function buildHeader(){
   var h=div("background:linear-gradient(135deg,#060c1a,#0a1535);border-bottom:1px solid #1e3a6b;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0");
   var icon=div("width:38px;height:38px;background:linear-gradient(135deg,#1d4ed8,#1e40af);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:19px");icon.textContent="⚡";
   var titles=div("");
+  var subLabel=ADMIN_READONLY?"🔑 ADMIN — READ-ONLY — ALL LOCATIONS":(LOCATION.name||"Athlete Performance Score");
   ap(titles,mk("div","font-size:17px;font-weight:800;color:#f1f5f9","ATHLETE PERFORMANCE SCORE"),
-            mk("div","font-size:10px;color:#3b82f6;letter-spacing:.08em;text-transform:uppercase;font-weight:600","Performance Evaluation Platform"));
+            mk("div","font-size:10px;color:"+(ADMIN_READONLY?"#f59e0b":"#3b82f6")+";letter-spacing:.08em;text-transform:uppercase;font-weight:600",subLabel));
   var left=div("display:flex;align-items:center;gap:12px");ap(left,icon,titles);
   var right=div("display:flex;gap:8px;align-items:center");
   var syncBadge=mk("div","background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);border-radius:8px;padding:5px 12px;font-size:12px;color:#22c55e;font-weight:600","✓ Live");
   syncBadge.id="sync-badge";
+  var displayed=ADMIN_MODE?(S_LOC_FILTER===null?S.athletes.length:filteredAthletes().length):S.athletes.length;
   var cnt=div("background:#0d1829;border:1px solid #1a2d50;border-radius:8px;padding:5px 12px;font-size:13px;color:#94a3b8");
-  var sp=mk("span","color:#3b82f6;font-weight:700;font-family:'Courier New',monospace;font-size:15px",S.athletes.length);
+  var sp=mk("span","color:#3b82f6;font-weight:700;font-family:'Courier New',monospace;font-size:15px",displayed);
   cnt.appendChild(sp);cnt.appendChild(document.createTextNode(" Athletes"));
-  var addBtn=mk("button","background:linear-gradient(135deg,#1d4ed8,#1e40af);border:none;border-radius:8px;padding:8px 14px;color:#fff;font-size:13px;font-weight:700;cursor:pointer","+ Add Athlete");
-  addBtn.onclick=function(){clearForm();goTab("add");};
-  ap(right,syncBadge,cnt,addBtn);
+  ap(right,syncBadge,cnt);
+  if(!ADMIN_READONLY){
+    var addBtn=mk("button","background:linear-gradient(135deg,#1d4ed8,#1e40af);border:none;border-radius:8px;padding:8px 14px;color:#fff;font-size:13px;font-weight:700;cursor:pointer","+ Add Athlete");
+    addBtn.onclick=function(){clearForm();goTab("add");};
+    var switchBtn=mk("button","background:transparent;border:1px solid #1e3a6b;border-radius:8px;padding:8px 10px;color:#64748b;font-size:11px;font-weight:600;cursor:pointer","↩ Switch Location");
+    switchBtn.onclick=function(){
+      LOCATION={id:null,name:"",code:""};LOCATION_CODE="";S.athletes=[];S.selId=null;
+      window.history.replaceState({},"","?");
+      S.screen="setup";render();
+    };
+    var toolsWrap=div("position:relative");
+    var toolsBtn=mk("button","background:transparent;border:1px solid #1e3a6b;border-radius:8px;padding:8px 10px;color:#94a3b8;font-size:11px;font-weight:600;cursor:pointer","🛠 Tools ▾");
+    var toolsMenu=div("display:none;position:absolute;top:calc(100% + 6px);right:0;background:#0d1829;border:1px solid #1e3a6b;border-radius:9px;padding:6px;min-width:180px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.4)");
+    function toolLink(label,href){
+      var a=mk("a",null,label);
+      a.href=href+(LOCATION.code?("?location="+LOCATION.code):"");
+      a.style.cssText="display:block;padding:9px 11px;border-radius:6px;color:#e2e8f0;font-size:13px;font-weight:600;text-decoration:none;white-space:nowrap";
+      a.onmouseover=function(){a.style.background="#132040";};
+      a.onmouseout=function(){a.style.background="transparent";};
+      return a;
+    }
+    ap(toolsMenu,
+      toolLink("📥 Import Athletes","import-athletes.html"),
+      toolLink("💳 Connect Stripe","connect-test.html"),
+      toolLink("📝 Signup Page","signup.html")
+    );
+    toolsBtn.onclick=function(e){
+      e.stopPropagation();
+      toolsMenu.style.display=(toolsMenu.style.display==="none")?"block":"none";
+    };
+    document.addEventListener("click",function(){toolsMenu.style.display="none";});
+    ap(toolsWrap,toolsBtn,toolsMenu);
+    ap(right,addBtn,toolsWrap,switchBtn);
+  } else {
+    var signOut=mk("button","background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:6px 10px;color:#f59e0b;font-size:11px;font-weight:600;cursor:pointer","↩ Sign Out");
+    signOut.onclick=function(){ADMIN_MODE=false;ADMIN_READONLY=false;S_LOC_FILTER=null;LOCATION={id:null,name:"",code:""};S.screen="setup";S.athletes=[];render();};
+    right.appendChild(signOut);
+  }
   ap(h,left,right);return h;
+}
+
+/* ── ADMIN LOCATION FILTER BAR ── */
+function buildAdminFilterBar(){
+  var bar=div("background:#080f1e;border-bottom:1px solid #1a2d50;padding:8px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;overflow-x:auto");
+  ap(bar,mk("div","font-size:11px;font-weight:700;color:#f59e0b;white-space:nowrap","📍 Location:"));
+  var locs={};S.athletes.forEach(function(a){if(a._locationId&&a._locationName)locs[a._locationId]=a._locationName;});
+  var locIds=Object.keys(locs);
+  var allPill=mk("button","padding:5px 12px;border-radius:99px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;border:1px solid "+(S_LOC_FILTER===null?"#3b82f6":"#1a2d50")+";background:"+(S_LOC_FILTER===null?"rgba(59,130,246,.15)":"#080f1e")+";color:"+(S_LOC_FILTER===null?"#3b82f6":"#64748b"),"All ("+S.athletes.length+")");
+  allPill.onclick=function(){S_LOC_FILTER=null;S.selId=null;render();};
+  bar.appendChild(allPill);
+  locIds.forEach(function(id){
+    var lid=parseInt(id);
+    var cnt=S.athletes.filter(function(a){return a._locationId===lid;}).length;
+    var isActive=S_LOC_FILTER===lid;
+    var pill=mk("button","padding:5px 12px;border-radius:99px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;border:1px solid "+(isActive?"#3b82f6":"#1a2d50")+";background:"+(isActive?"rgba(59,130,246,.15)":"#080f1e")+";color:"+(isActive?"#3b82f6":"#64748b"),locs[id]+" ("+cnt+")");
+    pill.onclick=(function(l){return function(){S_LOC_FILTER=l;S.selId=null;render();};})(lid);
+    bar.appendChild(pill);
+  });
+  return bar;
 }
 
 function buildNav(){
   var nav=div("background:#060c18;border-bottom:1px solid #1a2d50;display:flex;padding:0 12px;flex-shrink:0;overflow-x:auto");
-  var tabs=[["roster","🏃 Roster"],["score","🏆 APS Score"],["analytics","📊 Analytics"],["add","➕ Add Athlete"]];
+  var tabs=[["roster","🏃 Roster"],["score","🏆 APS Score"],["analytics","📊 Analytics"],["pipeline","🎯 Pipeline"]];
+  if(!ADMIN_READONLY)tabs.push(["add","➕ Add Athlete"]);
   tabs.forEach(function(item){
     var b=mk("button","","");b.className="tab-btn"+(S.tab===item[0]?" active":"");b.textContent=item[1];
     b.onclick=(function(k){return function(){if(k==="add"&&S.tab!=="add")clearForm();goTab(k);};})(item[0]);nav.appendChild(b);
   });
   return nav;
 }
+/* ══════════════════ PIPELINE (CRM) ══════════════════ */
+var STAGES=[["lead","Leads","#60a5fa"],["trial","Trials","#fbbf24"],["active","Active","#34d399"],["inactive","Inactive","#94a3b8"],["lost","Lost","#fb7185"]];
+var ACTC={note:"#94a3b8",call:"#60a5fa",text:"#22d3ee",email:"#a78bfa",meeting:"#fbbf24",eval:"#34d399",stage_change:"#f87171"};
+var PIPE={loaded:false,loading:false,contacts:[],locMap:{},taskCount:0,filter:null,detailId:null,detail:null,detailLoading:false};
+var PADD=null;
+
+async function apiPatch(table,filter,body){var r=await fetch(SB_URL+"/rest/v1/"+table+"?"+filter,{method:"PATCH",headers:HDRS,body:JSON.stringify(body)});var t=await r.text();if(!r.ok)throw new Error("HTTP "+r.status+" "+t);return t?JSON.parse(t):[];}
+
+function pipeName(c){return(((c.first_name||"")+" "+(c.last_name||"")).trim())||"Unnamed contact";}
+function stageLabel(k){for(var i=0;i<STAGES.length;i++)if(STAGES[i][0]===k)return STAGES[i][1];return k;}
+function contactLoc(id){if(!ADMIN_MODE)return LOCATION.id;for(var i=0;i<PIPE.contacts.length;i++)if(PIPE.contacts[i].id===id)return PIPE.contacts[i].location_id;return null;}
+function timeAgo(iso){var d=new Date(iso),s=(Date.now()-d.getTime())/1000;if(s<60)return"just now";if(s<3600)return Math.floor(s/60)+"m ago";if(s<86400)return Math.floor(s/3600)+"h ago";if(s<604800)return Math.floor(s/86400)+"d ago";return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});}
+
+async function loadPipeline(){
+  try{
+    var q=ADMIN_MODE?"aps_contacts?select=*&order=updated_at.desc":"aps_contacts?location_id=eq."+LOCATION.id+"&select=*&order=updated_at.desc";
+    PIPE.contacts=await apiGet(q);
+    await refreshTaskCount();
+    if(ADMIN_MODE){var locs=await dbLoadAllLocations();PIPE.locMap={};locs.forEach(function(l){PIPE.locMap[l.id]=l.name||l.code;});}
+    PIPE.loaded=true;PIPE.loading=false;render();
+  }catch(e){PIPE.loading=false;toast("Could not load pipeline",false);}
+}
+async function refreshTaskCount(){var q=ADMIN_MODE?"aps_tasks?select=id&done=eq.false":"aps_tasks?select=id&done=eq.false&location_id=eq."+LOCATION.id;var t=await apiGet(q);PIPE.taskCount=t.length;}
+
+async function pipeOpen(id){PIPE.detailId=id;PIPE.detail=null;PIPE.detailLoading=true;render();await loadPipeDetail(id);}
+function pipeClose(){PIPE.detailId=null;PIPE.detail=null;render();}
+async function loadPipeDetail(id){
+  try{
+    var acts=await apiGet("aps_activities?contact_id=eq."+id+"&select=*&order=created_at.desc&limit=50");
+    var tasks=await apiGet("aps_tasks?contact_id=eq."+id+"&select=*&order=done.asc,due_date.asc.nullslast");
+    var mem=await apiGet("aps_memberships?contact_id=eq."+id+"&status=eq.active&select=plan_name,status,price_cents,billing_interval&limit=1");
+    PIPE.detail={acts:acts,tasks:tasks,mem:(mem&&mem[0])||null};PIPE.detailLoading=false;
+    if(PIPE.detailId===id)render();
+  }catch(e){PIPE.detailLoading=false;toast("Could not load contact",false);}
+}
+async function pipeMove(id,stage){
+  var c=null,i;for(i=0;i<PIPE.contacts.length;i++)if(PIPE.contacts[i].id===id)c=PIPE.contacts[i];
+  if(!c||c.stage===stage)return;var from=c.stage;
+  try{
+    await apiPatch("aps_contacts","id=eq."+id,{stage:stage});
+    await apiPost("aps_activities",{location_id:contactLoc(id),contact_id:id,type:"stage_change",body:from+" → "+stage});
+    c.stage=stage;toast("Moved to "+stageLabel(stage),true);await loadPipeDetail(id);
+  }catch(e){toast("Could not update stage",false);}
+}
+async function pipeAddActivity(id,type,body){
+  if(!body){toast("Add a quick note first",false);return;}
+  try{await apiPost("aps_activities",{location_id:contactLoc(id),contact_id:id,type:type,body:body});toast("Logged",true);await loadPipeDetail(id);}
+  catch(e){toast("Could not log activity",false);}
+}
+async function pipeAddTask(id,title,due){
+  if(!title){toast("Name the follow-up first",false);return;}
+  try{await apiPost("aps_tasks",{location_id:contactLoc(id),contact_id:id,title:title,due_date:due||null});toast("Follow-up added",true);await refreshTaskCount();await loadPipeDetail(id);}
+  catch(e){toast("Could not add follow-up",false);}
+}
+async function pipeToggleTask(tid,done){try{await apiPatch("aps_tasks","id=eq."+tid,{done:done});await refreshTaskCount();if(PIPE.detailId!=null)await loadPipeDetail(PIPE.detailId);}catch(e){toast("Could not update task",false);}}
+
+function pipeAddOpen(){PADD={first_name:"",last_name:"",email:"",phone:"",relationship:"",source:"",stage:"lead",notes:"",athlete_id:"",err:""};render();}
+function pipeAddClose(){PADD=null;render();}
+async function pipeSaveContact(){
+  if(!PADD.first_name.trim()&&!PADD.last_name.trim()){PADD.err="Add a first or last name so this contact has something to go by.";render();return;}
+  var rec={location_id:LOCATION.id,first_name:PADD.first_name.trim(),last_name:PADD.last_name.trim(),email:PADD.email.trim()||null,phone:PADD.phone.trim()||null,relationship:PADD.relationship||null,source:PADD.source||null,stage:PADD.stage,notes:PADD.notes.trim()||null,athlete_id:PADD.athlete_id?parseInt(PADD.athlete_id):null};
+  try{await apiPost("aps_contacts",rec);PADD=null;toast("Contact added",true);PIPE.loaded=false;PIPE.loading=false;render();}
+  catch(e){PADD.err="Could not save: "+e.message;render();}
+}
+
+function buildPipeline(){
+  var wrap=div("flex:1;display:flex;flex-direction:column;overflow:hidden");
+  if(!PIPE.loaded){
+    if(!PIPE.loading){PIPE.loading=true;setTimeout(loadPipeline,0);}
+    ap(wrap,mk("div","flex:1;display:flex;align-items:center;justify-content:center;color:#3b82f6;font-size:14px;font-weight:700","⚡ Loading pipeline..."));
+    return wrap;
+  }
+  /* scoreboard */
+  var sc=div("display:flex;gap:8px;padding:12px;overflow-x:auto;flex-shrink:0;align-items:stretch");
+  STAGES.forEach(function(s){
+    var n=PIPE.contacts.filter(function(c){return c.stage===s[0];}).length,active=PIPE.filter===s[0];
+    var card=mk("button","flex:1;min-width:88px;background:#080f1e;border:1px solid "+(active?s[2]:"#1a2d50")+";border-top:3px solid "+s[2]+";border-radius:8px;padding:10px 12px;text-align:left;cursor:pointer");
+    ap(card,mk("div","font-size:26px;font-weight:900;color:#f1f5f9;line-height:1",String(n)),mk("div","font-size:10px;color:#64748b;font-weight:700;letter-spacing:.07em;text-transform:uppercase;margin-top:4px",s[1]));
+    card.onclick=(function(k){return function(){PIPE.filter=PIPE.filter===k?null:k;render();};})(s[0]);
+    sc.appendChild(card);
+  });
+  var tc=mk("button","flex:1;min-width:88px;background:#080f1e;border:1px solid #1a2d50;border-top:3px solid #f87171;border-radius:8px;padding:10px 12px;text-align:left;cursor:pointer");
+  ap(tc,mk("div","font-size:26px;font-weight:900;color:#f87171;line-height:1",String(PIPE.taskCount)),mk("div","font-size:10px;color:#64748b;font-weight:700;letter-spacing:.07em;text-transform:uppercase;margin-top:4px","Tasks Due"));
+  tc.onclick=function(){toast(PIPE.taskCount?PIPE.taskCount+" open follow-up(s) at this location":"No open follow-ups",true);};
+  sc.appendChild(tc);
+  if(!ADMIN_READONLY){var addB=mk("button","flex-shrink:0;background:#dc2626;color:#fff;border:none;border-radius:8px;padding:0 16px;font-weight:700;font-size:13px;cursor:pointer;align-self:stretch","+ Add");addB.onclick=pipeAddOpen;sc.appendChild(addB);}
+  ap(wrap,sc);
+
+  if(PIPE.contacts.length===0){
+    var emp=div("flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px;color:#64748b");
+    ap(emp,mk("div","font-size:18px;font-weight:800;color:#f1f5f9;margin-bottom:6px","No contacts yet"),mk("div","font-size:13px;max-width:330px;line-height:1.5","This location's pipeline is empty. Add your first prospect to start moving people from lead to member."));
+    if(!ADMIN_READONLY){var ab=mk("button","margin-top:16px;background:#dc2626;color:#fff;font-weight:700;font-size:13px;padding:10px 18px;border-radius:8px;border:none;cursor:pointer","+ Add contact");ab.onclick=pipeAddOpen;ap(emp,ab);}
+    ap(wrap,emp);
+    if(PIPE.detailId!=null)wrap.appendChild(buildPipeDrawer());
+    if(PADD)wrap.appendChild(buildPipeAddModal());
+    return wrap;
+  }
+  /* board */
+  var board=div("flex:1;display:flex;gap:12px;overflow-x:auto;padding:0 12px 16px;align-items:flex-start");
+  var shown=PIPE.filter?STAGES.filter(function(s){return s[0]===PIPE.filter;}):STAGES;
+  var total=PIPE.contacts.length||1;
+  shown.forEach(function(s){
+    var list=PIPE.contacts.filter(function(c){return c.stage===s[0];});
+    var col=div("flex:0 0 280px;min-width:280px;display:flex;flex-direction:column");
+    var head=div("display:flex;align-items:center;gap:8px;padding:4px 2px 8px");
+    ap(head,mk("div","font-size:22px;font-weight:900;color:"+s[2]+";line-height:1",String(list.length)),mk("div","font-size:13px;font-weight:700;color:#f1f5f9",s[1]));
+    ap(col,head);
+    var bar=div("height:3px;background:#1a2d50;border-radius:2px;margin:0 2px 10px;overflow:hidden");ap(bar,mk("div","height:100%;background:"+s[2]+";width:"+Math.round(list.length/total*100)+"%"));ap(col,bar);
+    var body=div("display:flex;flex-direction:column;gap:8px");
+    if(list.length===0)ap(body,mk("div","color:#475569;font-size:12px;text-align:center;padding:14px;border:1px dashed #1a2d50;border-radius:8px","No one here yet"));
+    list.forEach(function(c){body.appendChild(pipeCard(c,s[2]));});
+    ap(col,body);board.appendChild(col);
+  });
+  ap(wrap,board);
+  if(PIPE.detailId!=null)wrap.appendChild(buildPipeDrawer());
+  if(PADD)wrap.appendChild(buildPipeAddModal());
+  return wrap;
+}
+function pipeCard(c,accent){
+  var b=mk("button","width:100%;background:#080f1e;border:1px solid #1a2d50;border-left:3px solid "+accent+";border-radius:8px;padding:11px 12px;text-align:left;cursor:pointer");
+  ap(b,mk("div","font-weight:700;font-size:14px;color:#f1f5f9",pipeName(c)));
+  var meta=div("font-size:11px;color:#64748b;margin-top:3px;display:flex;gap:6px;flex-wrap:wrap;align-items:center");
+  if(c.source)ap(meta,mk("span","background:#0b1527;border:1px solid #1a2d50;border-radius:99px;padding:1px 7px;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#94a3b8",c.source));
+  if(c.relationship)ap(meta,mk("span",null,c.relationship));
+  if(c.phone)ap(meta,mk("span",null,c.phone));
+  if(ADMIN_MODE&&PIPE.locMap[c.location_id])ap(meta,mk("span","color:#60a5fa",PIPE.locMap[c.location_id]));
+  b.appendChild(meta);b.onclick=function(){pipeOpen(c.id);};return b;
+}
+function buildPipeDrawer(){
+  var root=div("");
+  var scrim=mk("div","position:fixed;inset:0;background:rgba(2,6,15,.6);z-index:800");scrim.onclick=pipeClose;
+  var mob=window.innerWidth<=720;
+  var panel=div(mob?"position:fixed;left:0;right:0;bottom:0;height:88vh;background:#060c18;border-top:1px solid #1a2d50;border-radius:16px 16px 0 0;z-index:801;display:flex;flex-direction:column":"position:fixed;top:0;right:0;height:100%;width:420px;max-width:100%;background:#060c18;border-left:1px solid #1a2d50;z-index:801;display:flex;flex-direction:column");
+  var c=null,i;for(i=0;i<PIPE.contacts.length;i++)if(PIPE.contacts[i].id===PIPE.detailId)c=PIPE.contacts[i];
+  if(!c){root.appendChild(scrim);return root;}
+  var hd=div("background:#080f1e;border-bottom:1px solid #1a2d50;padding:16px 18px;position:relative;flex-shrink:0");
+  var cl=mk("button","position:absolute;top:12px;right:12px;background:#1a2d50;color:#fff;border:none;width:30px;height:30px;border-radius:7px;font-size:18px;cursor:pointer","×");cl.onclick=pipeClose;
+  ap(hd,mk("div","font-size:20px;font-weight:800;color:#f1f5f9;padding-right:34px",pipeName(c)),cl);
+  var cline=[];if(c.email)cline.push(c.email);if(c.phone)cline.push(c.phone);if(c.relationship)cline.push(c.relationship);
+  ap(hd,mk("div","font-size:12px;color:#64748b;margin-top:4px",cline.join("  ·  ")||"No contact info yet"));
+  var body=div("flex:1;overflow-y:auto;padding:16px 18px 40px");
+
+  if(PIPE.detailLoading||!PIPE.detail){
+    ap(body,mk("div","color:#64748b;font-size:13px;text-align:center;padding:30px","Loading..."));
+    ap(panel,hd,body);root.appendChild(scrim);root.appendChild(panel);return root;
+  }
+  var ro=ADMIN_READONLY;
+  /* Stage */
+  var secH=function(t){return mk("div","font-size:10px;color:#64748b;font-weight:700;letter-spacing:.09em;text-transform:uppercase;margin:0 0 9px",t);};
+  var stageSec=div("margin-bottom:20px");ap(stageSec,secH("Stage"));
+  var srow=div("display:flex;gap:6px;flex-wrap:wrap");
+  STAGES.forEach(function(s){
+    var on=c.stage===s[0];
+    var chip=mk("button","padding:7px 12px;border-radius:99px;font-size:12px;font-weight:700;cursor:"+(ro?"default":"pointer")+";border:1.5px solid "+(on?s[2]:"#1a2d50")+";background:"+(on?s[2]:"transparent")+";color:"+(on?"#060c18":"#94a3b8"),s[1].replace(/s$/,""));
+    if(!ro&&!on)chip.onclick=(function(k){return function(){pipeMove(c.id,k);};})(s[0]);
+    srow.appendChild(chip);
+  });
+  ap(stageSec,srow);ap(body,stageSec);
+  /* Membership */
+  var memSec=div("margin-bottom:20px");ap(memSec,secH("Membership"));
+  if(PIPE.detail.mem){var m=PIPE.detail.mem;ap(memSec,mk("span","display:inline-flex;align-items:center;gap:6px;background:rgba(52,211,153,.14);color:#34d399;font-weight:700;font-size:12px;padding:6px 12px;border-radius:99px","● "+(m.plan_name||"Member")+" · $"+(m.price_cents/100).toFixed(0)+"/"+m.billing_interval));}
+  else ap(memSec,mk("div","color:#64748b;font-size:13px","No active membership"));
+  ap(body,memSec);
+  /* Follow-ups */
+  var taskSec=div("margin-bottom:20px");ap(taskSec,secH("Follow-ups"));
+  var today=new Date().toISOString().slice(0,10);
+  if(PIPE.detail.tasks.length){
+    PIPE.detail.tasks.forEach(function(t){
+      var row=div("display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #1a2d50");
+      var cb=mk("input");cb.type="checkbox";cb.checked=!!t.done;cb.style.cssText="margin-top:2px;width:17px;height:17px;accent-color:#34d399;cursor:pointer";if(ro)cb.disabled=true;else cb.onchange=(function(tid){return function(){pipeToggleTask(tid,this.checked);};})(t.id);
+      var main=div("flex:1");
+      ap(main,mk("div","font-size:14px;color:"+(t.done?"#64748b":"#f1f5f9")+";"+(t.done?"text-decoration:line-through":""),t.title));
+      if(t.due_date){var od=!t.done&&t.due_date<today;ap(main,mk("div","font-size:11px;margin-top:1px;color:"+(od?"#f87171":"#64748b")+";font-weight:"+(od?"700":"400"),"Due "+t.due_date+(od?" · overdue":"")));}
+      ap(row,cb,main);taskSec.appendChild(row);
+    });
+  }else ap(taskSec,mk("div","color:#475569;font-size:12px;padding:10px 0","No follow-ups. Add one so this contact doesn't go cold."));
+  if(!ro){
+    var qrow=div("display:flex;gap:6px;margin-top:10px;flex-wrap:wrap");
+    var tin=mk("input");tin.placeholder="New follow-up...";tin.style.cssText="flex:1;min-width:120px;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:9px 11px;color:#f1f5f9;font-size:13px";
+    var din=mk("input");din.type="date";din.style.cssText="background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:9px 11px;color:#94a3b8;font-size:13px";
+    var tbtn=mk("button","background:#1a2d50;color:#f1f5f9;border:none;border-radius:8px;padding:9px 14px;font-weight:700;font-size:13px;cursor:pointer","Add");
+    tbtn.onclick=(function(cid){return function(){pipeAddTask(cid,tin.value.trim(),din.value);};})(c.id);
+    ap(qrow,tin,din,tbtn);ap(taskSec,qrow);
+  }
+  ap(body,taskSec);
+  /* Activity */
+  var actSec=div("margin-bottom:8px");ap(actSec,secH("Activity"));
+  if(PIPE.detail.acts.length){
+    PIPE.detail.acts.forEach(function(a){
+      var row=div("display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #1a2d50");
+      ap(row,mk("div","width:8px;height:8px;border-radius:50%;margin-top:5px;flex-shrink:0;background:"+(ACTC[a.type]||"#94a3b8")));
+      var tb=div("flex:1;min-width:0");
+      ap(tb,mk("div","font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#94a3b8",(a.type||"note").replace("_"," ")));
+      if(a.body)ap(tb,mk("div","font-size:13px;color:#f1f5f9;margin-top:1px;word-break:break-word",a.body));
+      ap(tb,mk("div","font-size:11px;color:#475569;margin-top:2px",timeAgo(a.created_at)+(a.created_by?" · "+a.created_by:"")));
+      ap(row,tb);actSec.appendChild(row);
+    });
+  }else ap(actSec,mk("div","color:#475569;font-size:12px;padding:10px 0","No history yet. Log the first touch below."));
+  if(!ro){
+    var trow=div("display:flex;gap:6px;margin-top:10px");
+    var tsel=mk("select");tsel.style.cssText="background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:9px 11px;color:#f1f5f9;font-size:13px";
+    [["note","Note"],["call","Call"],["text","Text"],["email","Email"],["meeting","Meeting"],["eval","Eval"]].forEach(function(o){var op=mk("option",null,o[1]);op.value=o[0];tsel.appendChild(op);});
+    ap(trow,tsel);ap(actSec,trow);
+    var brow=div("display:flex;gap:6px;margin-top:6px");
+    var bin=mk("input");bin.placeholder="What happened?";bin.style.cssText="flex:1;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:9px 11px;color:#f1f5f9;font-size:13px";
+    var lbtn=mk("button","background:#dc2626;color:#fff;border:none;border-radius:8px;padding:9px 16px;font-weight:700;font-size:13px;cursor:pointer","Log");
+    lbtn.onclick=(function(cid){return function(){pipeAddActivity(cid,tsel.value,bin.value.trim());};})(c.id);
+    ap(brow,bin,lbtn);ap(actSec,brow);
+  }
+  ap(body,actSec);
+  if(c.notes){var nSec=div("margin-top:20px");ap(nSec,secH("Notes"),mk("div","font-size:13px;color:#cbd5e1;line-height:1.5",c.notes));ap(body,nSec);}
+  ap(panel,hd,body);root.appendChild(scrim);root.appendChild(panel);return root;
+}
+function buildPipeAddModal(){
+  var root=div("");
+  var scrim=mk("div","position:fixed;inset:0;background:rgba(2,6,15,.7);z-index:820");scrim.onclick=pipeAddClose;
+  var card=div("position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:460px;max-width:calc(100% - 24px);max-height:88vh;overflow-y:auto;background:#0b1527;border:1px solid #1a2d50;border-radius:14px;z-index:821");
+  var hd=div("background:#080f1e;border-bottom:1px solid #1a2d50;padding:15px 18px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0");
+  var cl=mk("button","background:#1a2d50;color:#fff;border:none;width:28px;height:28px;border-radius:7px;font-size:17px;cursor:pointer","×");cl.onclick=pipeAddClose;
+  ap(hd,mk("div","font-size:16px;font-weight:800;color:#f1f5f9","Add contact"),cl);ap(card,hd);
+  var bd=div("padding:16px 18px");
+  var IS="width:100%;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:10px 12px;color:#f1f5f9;font-size:14px";
+  var mkField=function(key,label,type){var f=div("margin-bottom:12px");ap(f,lbl(label));var inp=mk("input");if(type)inp.type=type;inp.style.cssText=IS;inp.value=PADD[key]||"";inp.addEventListener("input",function(){PADD[key]=this.value;});ap(f,inp);return f;};
+  var mkSelect=function(key,label,opts){var f=div("margin-bottom:12px");ap(f,lbl(label));var sel=mk("select");sel.style.cssText=IS;opts.forEach(function(o){var val=(typeof o==="object")?o[0]:o,txt=(typeof o==="object")?o[1]:o;var op=mk("option",null,txt);op.value=val;if(PADD[key]===val)op.selected=true;sel.appendChild(op);});sel.addEventListener("change",function(){PADD[key]=this.value;});ap(f,sel);return f;};
+  var r1=div("display:grid;grid-template-columns:1fr 1fr;gap:10px");ap(r1,mkField("first_name","First name"),mkField("last_name","Last name"));ap(bd,r1);
+  var r2=div("display:grid;grid-template-columns:1fr 1fr;gap:10px");ap(r2,mkField("email","Email","email"),mkField("phone","Phone"));ap(bd,r2);
+  var r3=div("display:grid;grid-template-columns:1fr 1fr;gap:10px");ap(r3,mkSelect("relationship","Relationship",["","Parent","Guardian","Self","Coach","Other"]),mkSelect("source","Source",["","Walk-in","Referral","Web","Event","Social","Other"]));ap(bd,r3);
+  var athOpts=[["","— none —"]];S.athletes.forEach(function(a){athOpts.push([String(a._dbid),a.name||("Athlete #"+a._dbid)]);});
+  var r4=div("display:grid;grid-template-columns:1fr 1fr;gap:10px");ap(r4,mkSelect("stage","Stage",[["lead","Lead"],["trial","Trial"],["active","Active"],["inactive","Inactive"],["lost","Lost"]]),mkSelect("athlete_id","Link athlete",athOpts));ap(bd,r4);
+  var nf=div("margin-bottom:12px");ap(nf,lbl("Notes"));var nta=mk("textarea");nta.style.cssText=IS+";resize:vertical;min-height:60px";nta.value=PADD.notes||"";nta.addEventListener("input",function(){PADD.notes=this.value;});ap(nf,nta);ap(bd,nf);
+  if(PADD.err)ap(bd,mk("div","color:#f87171;font-size:13px;margin-bottom:10px",PADD.err));
+  var foot=div("display:flex;gap:10px;justify-content:flex-end;margin-top:4px");
+  var cancel=mk("button","background:transparent;border:1px solid #1a2d50;color:#94a3b8;border-radius:8px;padding:10px 16px;font-weight:700;font-size:13px;cursor:pointer","Cancel");cancel.onclick=pipeAddClose;
+  var save=mk("button","background:#dc2626;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-weight:700;font-size:13px;cursor:pointer","Save contact");save.onclick=pipeSaveContact;
+  ap(foot,cancel,save);ap(bd,foot);ap(card,bd);
+  root.appendChild(scrim);root.appendChild(card);return root;
+}
+/* ══════════════════ END PIPELINE ══════════════════ */
+
 function buildContent(){
   var c=div("flex:1;display:flex;overflow:hidden");
   if(S.tab==="roster")c.appendChild(buildRoster());
   else if(S.tab==="score")c.appendChild(buildScore());
   else if(S.tab==="analytics")c.appendChild(buildAnalytics());
-  else c.appendChild(buildAdd());
+  else if(S.tab==="pipeline")c.appendChild(buildPipeline());
+  else if(!ADMIN_READONLY)c.appendChild(buildAdd());
   return c;
 }
 
 function render(){
   var app=document.getElementById("app");app.innerHTML="";
-  if(S.loading){ap(app,mk("div","flex:1;display:flex;align-items:center;justify-content:center;color:#3b82f6;font-size:15px;font-weight:700;letter-spacing:.05em","⚡ Loading..."));return;}
+  if(S.screen==="loading"){ap(app,mk("div","flex:1;display:flex;align-items:center;justify-content:center;color:#3b82f6;font-size:15px;font-weight:700;letter-spacing:.05em","⚡ Loading..."));return;}
+  if(S.screen==="setup"){app.appendChild(buildSetup());return;}
+  if(S.screen==="register"){app.appendChild(buildRegister());return;}
+  if(S.screen==="setpassword"){app.appendChild(buildSetPassword());return;}
   if(SHARE_ID!==null){app.appendChild(buildShareView());return;}
-  ap(app,buildHeader(),buildNav(),buildContent());
+  var children=[buildHeader(),buildNav()];
+  if(ADMIN_MODE)children.push(buildAdminFilterBar());
+  children.push(buildContent());
+  children.forEach(function(c){app.appendChild(c);});
 }
 
 /* ── CAT SCORE ── */
@@ -484,7 +940,7 @@ function buildScore(){
           var bw=div("background:#1a2d50;border-radius:99px;height:4px;overflow:hidden");
           var bb=div("height:100%;border-radius:99px;background:#dc2626");bb.style.width=pctRow+"%";bw.appendChild(bb);
           rrow.appendChild(bw);
-          if(row.val)rrow.appendChild(mk("div","font-size:11px;color:#64748b;margin-top:3px","Result: "+row.val+(row.unit?" "+row.unit:"")));
+          if(row.val)rrow.appendChild(mk("div","font-size:11px;color:#64748b;margin-top:3px","Result: "+fmtVal(row.t,row.val)+(row.unit?" "+row.unit:(row.t==="Broad Jump"?"":" "+(UNITS[row.t]||"")))));
         }else{
           rrow.appendChild(mk("div","font-size:11px;color:#475569","No result recorded"));
         }
@@ -591,19 +1047,23 @@ function buildRoster(){
     var sub=div("color:#64748b;font-size:12px;margin-top:2px");if(ath.program)ap(sub,mk("span","color:#f87171;font-weight:600;margin-right:8px",ath.program));sub.appendChild(document.createTextNode("Evaluated: "+(disp.date||"—")));
     if(evalIdx!==evals.length-1){sub.appendChild(mk("span","margin-left:8px;color:#f87171;font-weight:700;font-size:11px;background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.3);border-radius:99px;padding:1px 9px","Viewing past evaluation"));}
     var btnRow=div("display:flex;gap:8px;flex-wrap:wrap");
-    var newEvalBtn=mk("button","background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.35);color:#f87171;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer","+ New Evaluation");
-    newEvalBtn.onclick=(function(a){return function(){startNewEvaluation(a);};})(ath);
-    var editBtn=mk("button","background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.35);color:#f87171;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer","✎ Edit");
-    editBtn.onclick=(function(a,idx){return function(){startEditEvaluation(a,idx);};})(ath,evalIdx);
-    var delBtn=mk("button","background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:#f87171;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer","Remove");
-    delBtn.onclick=(function(id){return function(){if(confirm("Remove this athlete?"))deleteAthlete(id);};})(ath._dbid);
     var shareBtn=mk("button","background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.35);color:#f87171;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer","🔗 Share");
     shareBtn.onclick=(function(id){return function(){
       var url=window.location.origin+window.location.pathname+"?athlete="+id;
       if(navigator.clipboard){navigator.clipboard.writeText(url).then(function(){toast("Link copied! Send to parent.");});}
       else{prompt("Copy this athlete link:",url);}
     };})(ath._dbid);
-    ap(btnRow,newEvalBtn,editBtn,shareBtn,delBtn);
+    if(!ADMIN_READONLY){
+      var newEvalBtn=mk("button","background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.35);color:#f87171;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer","+ New Evaluation");
+      newEvalBtn.onclick=(function(a){return function(){startNewEvaluation(a);};})(ath);
+      var editBtn=mk("button","background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.35);color:#f87171;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer","✎ Edit");
+      editBtn.onclick=(function(a,idx){return function(){startEditEvaluation(a,idx);};})(ath,evalIdx);
+      var delBtn=mk("button","background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:#f87171;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer","Remove");
+      delBtn.onclick=(function(id){return function(){if(confirm("Remove this athlete?"))deleteAthlete(id);};})(ath._dbid);
+      ap(btnRow,newEvalBtn,editBtn,shareBtn,delBtn);
+    } else {
+      ap(btnRow,shareBtn);
+    }
     ap(dh,ap(div(""),mk("div","font-size:28px;font-weight:800;color:#f1f5f9",ath.name),sub),btnRow);detail.appendChild(dh);
     var bio=div("display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px");
     [["Age",ath.age,"yrs"],["Gender",ath.gender,null],["Age Group",ag,null],["Height",disp.height,null],["Weight",disp.weight,"lbs"]].forEach(function(sc){ap(bio,scard(sc[0],sc[1],sc[2]));});detail.appendChild(bio);
@@ -650,7 +1110,7 @@ function buildRoster(){
     }
     var rg=div("card");rg.className="card";rg.appendChild(ctitle("Test Results"));
     var grid=div("display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-top:6px");
-    RATED.forEach(function(t){var val=disp.results[t],r=getRat(ath.gender,t,ag,val),n=getNrm(ath.gender,t,ag,val),s=getS(ath.gender,t,ag);var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid "+(r?RC[r]+"55":"#2a1818"));var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em",t),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#475569"),val||"—"));if(val)ap(vrow,mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,top,vrow);if(n!==null){var sh=div("display:flex;justify-content:space-between;margin-top:5px;margin-bottom:2px");ap(sh,mk("span","font-size:10px;color:#64748b","Score"),mk("span","font-size:10px;font-weight:700;font-family:'Courier New',monospace;color:"+(RC[r]||"#64748b"),n+"/100"));var pw=div("prog-wrap");pw.className="prog-wrap";var pb=div("prog");pb.className="prog";pb.style.cssText="width:"+Math.min(n,100)+"%;background:"+(RC[r]||"#4a2424");pw.appendChild(pb);ap(card,sh,pw);}if(s)ap(card,mk("p","margin-top:5px;font-size:10px;color:#475569",s.d==="L"?"Ex ≤"+s.ex+" · Gd ≤"+s.go:"Ex ≥"+s.ex+" · Gd ≥"+s.go));grid.appendChild(card);});
+    RATED.forEach(function(t){var val=disp.results[t],r=getRat(ath.gender,t,ag,val),n=getNrm(ath.gender,t,ag,val),s=getS(ath.gender,t,ag);var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid "+(r?RC[r]+"55":"#2a1818"));var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em",t),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#475569"),fmtVal(t,val)||"—"));if(val&&t!=="Broad Jump")ap(vrow,mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,top,vrow);if(n!==null){var sh=div("display:flex;justify-content:space-between;margin-top:5px;margin-bottom:2px");ap(sh,mk("span","font-size:10px;color:#64748b","Score"),mk("span","font-size:10px;font-weight:700;font-family:'Courier New',monospace;color:"+(RC[r]||"#64748b"),n+"/100"));var pw=div("prog-wrap");pw.className="prog-wrap";var pb=div("prog");pb.className="prog";pb.style.cssText="width:"+Math.min(n,100)+"%;background:"+(RC[r]||"#4a2424");pw.appendChild(pb);ap(card,sh,pw);}if(s)ap(card,mk("p","margin-top:5px;font-size:10px;color:#475569",s.d==="L"?"Ex ≤"+s.ex+" · Gd ≤"+s.go:"Ex ≥"+fmtVal(t,s.ex)+" · Gd ≥"+fmtVal(t,s.go)));grid.appendChild(card);});
     ["Chin up Hold"].forEach(function(t){var val=disp.results[t];if(!val)return;var card=div("background:#080f1e;border-radius:10px;padding:12px 13px;border:1px solid #1a2d50");if(t==="Chin up Hold"){var unit=disp.chinUpUnit||ath.chinUpUnit||"sec";var r=getChinUpRat(ath.gender,val,unit);card.style.borderColor=r?RC[r]+"55":"#2a1818";var top=div("display:flex;justify-content:space-between;align-items:center;margin-bottom:5px");ap(top,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em","Chin ups"),badge(r));var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:"+(r?RC[r]:"#64748b"),val),mk("span","font-size:11px;color:#64748b",unit));ap(card,top,vrow);if(r){var sh=div("display:flex;justify-content:space-between;margin-top:5px");ap(sh,mk("span","font-size:10px;color:#64748b",unit==="sec"?"Any time = Below Avg":"Ex ≥16 (Boys) / ≥8 (Girls)"));card.appendChild(sh);}}else{var vrow=div("display:flex;align-items:baseline;gap:4px");ap(vrow,mk("span","font-family:'Courier New',monospace;font-size:23px;font-weight:700;color:#64748b",val),mk("span","font-size:11px;color:#64748b",UNITS[t]));ap(card,mk("div","font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px",dispName(t)),vrow);}grid.appendChild(card);});
     rg.appendChild(grid);detail.appendChild(rg);
     if(disp.notes||disp.goals){var nr=div("display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px");if(disp.notes){var nc=div("card");nc.className="card";ap(nc,ctitle("Coach Observations"),mk("p","color:#94a3b8;font-size:13px;line-height:1.7",disp.notes));nr.appendChild(nc);}if(disp.goals){var gc=div("card");gc.className="card";ap(gc,ctitle("Athlete Goals"),mk("p","color:#94a3b8;font-size:13px;line-height:1.7",disp.goals));nr.appendChild(gc);}detail.appendChild(nr);}
@@ -713,7 +1173,7 @@ function buildRoster(){
   }
 }
 
-function updateStdBar(ath,ag,area){if(!area)return;area.innerHTML="";var s=getS(ath.gender,S.sTest,ag);if(!s)return;area.appendChild(barChart([s.ex,s.go,s.av,s.ba],["Excellent","Good","Avg","Below Avg"],["#22c55e","#38bdf8","#f59e0b","#f87171"],310,135));var v=parseFloat(ath.results[S.sTest]);if(!isNaN(v)&&ath.results[S.sTest]!==""){var r=getRat(ath.gender,S.sTest,ag,ath.results[S.sTest]);var rp=mk("p","margin-top:6px;font-size:11px;color:#94a3b8;text-align:center","Your result: ");var vs=mk("span","font-family:'Courier New',monospace;color:"+(RC[r]||"#fff"),v+" "+UNITS[S.sTest]);ap(rp,vs,document.createTextNode(" → "),badge(r));area.appendChild(rp);}}
+function updateStdBar(ath,ag,area){if(!area)return;area.innerHTML="";var s=getS(ath.gender,S.sTest,ag);if(!s)return;area.appendChild(barChart([s.ex,s.go,s.av,s.ba],["Excellent","Good","Avg","Below Avg"],["#22c55e","#38bdf8","#f59e0b","#f87171"],310,135));var v=parseFloat(ath.results[S.sTest]);if(!isNaN(v)&&ath.results[S.sTest]!==""){var r=getRat(ath.gender,S.sTest,ag,ath.results[S.sTest]);var rp=mk("p","margin-top:6px;font-size:11px;color:#94a3b8;text-align:center","Your result: ");var vs=mk("span","font-family:'Courier New',monospace;color:"+(RC[r]||"#fff"),fmtVal(S.sTest,v)+(S.sTest==="Broad Jump"?"":" "+UNITS[S.sTest]));ap(rp,vs,document.createTextNode(" → "),badge(r));area.appendChild(rp);}}
 
 /* ── ANALYTICS ── */
 function buildAnalytics(){
@@ -749,13 +1209,13 @@ function refreshAnalytics(){
   [["Gender","#64748b"],["Age","#64748b"],["Excellent","#22c55e"],["Good","#38bdf8"],["Average","#f59e0b"],["Below Avg","#f87171"],["Unit","#64748b"]].forEach(function(h){var th=document.createElement("th");th.style.color=h[1];th.textContent=h[0];hr.appendChild(th);});
   thead.appendChild(hr);tbl.appendChild(thead);
   var tbody=document.createElement("tbody");
-  ["Boys","Girls"].forEach(function(g){AGS.forEach(function(ag){var s=getS(g,S.aTest,ag);if(!s)return;var row=document.createElement("tr");[[g,GB[g]],[ag,"#94a3b8"],[s.ex,"#22c55e"],[s.go,"#38bdf8"],[s.av,"#f59e0b"],[s.ba,"#f87171"],[UNITS[S.aTest],"#64748b"]].forEach(function(cell,i){var td=document.createElement("td");td.style.color=cell[1];if(i>=2&&i<=5)td.style.fontFamily="'Courier New',monospace";td.textContent=cell[0];row.appendChild(td);});tbody.appendChild(row);});});
+  ["Boys","Girls"].forEach(function(g){AGS.forEach(function(ag){var s=getS(g,S.aTest,ag);if(!s)return;var row=document.createElement("tr");[[g,GB[g]],[ag,"#94a3b8"],[fmtVal(S.aTest,s.ex),"#22c55e"],[fmtVal(S.aTest,s.go),"#38bdf8"],[fmtVal(S.aTest,s.av),"#f59e0b"],[fmtVal(S.aTest,s.ba),"#f87171"],[S.aTest==="Broad Jump"?"ft/in":UNITS[S.aTest],"#64748b"]].forEach(function(cell,i){var td=document.createElement("td");td.style.color=cell[1];if(i>=2&&i<=5)td.style.fontFamily="'Courier New',monospace";td.textContent=cell[0];row.appendChild(td);});tbody.appendChild(row);});});
   tbl.appendChild(tbody);sc.appendChild(tbl);
 }
 
 /* ── ADD ATHLETE ── */
 function buildAdd(){
-  var wrap=div("flex:1;overflow-y:auto;padding:20px");
+  var wrap=div("flex:1;overflow-y:auto;padding:20px;padding-bottom:100px");
   var titleText="ADD ATHLETE",subText="Saved to "+LOCATION.name+" — visible to your coaches instantly.";
   if(FORM._mode==="edit"){titleText="EDIT EVALUATION — "+FORM.name;subText="Editing the "+(FORM.date||"selected")+" evaluation.";}
   else if(FORM._mode==="newEval"){titleText="NEW EVALUATION — "+FORM.name;subText="Adds a new dated evaluation to "+FORM.name+"'s history, keeping past results intact.";}
@@ -785,6 +1245,29 @@ function buildAdd(){
     var initR=FORM.age?getRat(FORM.gender,t,ageGrp(FORM.age),FORM.results[t]):null;
     var bd=badge(initR);badgeSpans[t]=bd;
     var bdWrap=div("display:flex;align-items:center;padding-bottom:2px");bdWrap.appendChild(bd);
+    if(t==="Broad Jump"){
+      var cur=parseFloat(FORM.results[t]);var curFt="",curIn="";
+      if(!isNaN(cur)&&FORM.results[t]!==""){curFt=String(Math.floor(cur/12));curIn=String(Math.round(cur-Math.floor(cur/12)*12));}
+      var BJIS=IS+"min-width:0;padding:8px 4px;text-align:center;";
+      var ftI=document.createElement("input");ftI.style.cssText=BJIS;ftI.type="number";ftI.step="1";ftI.min="0";ftI.value=curFt;ftI.placeholder="ft";
+      var inI=document.createElement("input");inI.style.cssText=BJIS;inI.type="number";inI.step="1";inI.min="0";inI.max="11";inI.value=curIn;inI.placeholder="in";
+      function syncBJ(){
+        var fv=ftI.value.trim(),iv=inI.value.trim();
+        if(fv===""&&iv===""){FORM.results[t]="";}
+        else{
+          var f=parseInt(fv)||0;var n=parseInt(iv)||0;
+          if(n>11){n=11;inI.value="11";}
+          if(n<0){n=0;inI.value="0";}
+          FORM.results[t]=String(f*12+n);
+        }
+        var bd2=badgeSpans[t];
+        if(bd2&&bd2.parentNode){var r=FORM.age?getRat(FORM.gender,t,ageGrp(FORM.age),FORM.results[t]):null;var nb=badge(r);bd2.parentNode.replaceChild(nb,bd2);badgeSpans[t]=nb;}
+      }
+      ftI.addEventListener("input",syncBJ);inI.addEventListener("input",syncBJ);
+      var bjGrid=div("display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px");ap(bjGrid,ftI,inI);
+      ap(row,ap(div(""),lbl("Broad Jump (ft / in)"),bjGrid),bdWrap);rg.appendChild(row);
+      return;
+    }
     var i=document.createElement("input");i.style.cssText=IS;i.type="number";i.step="0.001";i.value=FORM.results[t]||"";i.placeholder=UNITS[t];
     i.addEventListener("input",function(){FORM.results[t]=this.value;var bd=badgeSpans[t];if(bd&&bd.parentNode){var r=FORM.age?getRat(FORM.gender,t,ageGrp(FORM.age),this.value):null;var nb=badge(r);bd.parentNode.replaceChild(nb,bd);badgeSpans[t]=nb;}});
     ap(row,ap(div(""),lbl(t+" ("+UNITS[t]+")"),i),bdWrap);rg.appendChild(row);
@@ -793,7 +1276,7 @@ function buildAdd(){
   // Chin ups — with reps/sec dropdown
   (function(){
     var cuRow=div("display:grid;grid-template-columns:1fr auto;gap:8px;align-items:flex-end;margin-bottom:8px");
-    var cuInp=document.createElement("input");cuInp.style.cssText=IS;cuInp.type="number";cuInp.step="1";cuInp.value=FORM.results["Chin up Hold"]||"";cuInp.placeholder="0";
+    var cuInp=document.createElement("input");cuInp.style.cssText=IS+"min-width:0;padding:8px 4px;text-align:center;";cuInp.type="number";cuInp.step="1";cuInp.value=FORM.results["Chin up Hold"]||"";cuInp.placeholder="0";
     cuInp.addEventListener("input",function(){FORM.results["Chin up Hold"]=this.value;});
     var cuSel=document.createElement("select");cuSel.style.cssText=IS+"cursor:pointer;width:90px;";
     ["reps","sec"].forEach(function(u){var o=document.createElement("option");o.value=u;o.textContent=u;if((FORM.chinUpUnit||"reps")===u)o.selected=true;cuSel.appendChild(o);});
@@ -873,7 +1356,14 @@ function buildAdd(){
 
 /* ── BOOT ── */
 render();
-loadAthletes();
+if(!LOCATION_CODE){
+  S.screen="setup";render();
+} else {
+  loadLocation().then(function(found){
+    if(!found){S.screen="setup";render();}
+    else{loadAthletes();}
+  }).catch(function(err){toast("Connection error: "+err.message,false);S.screen="setup";render();});
+}
 </script>
 </body>
 </html>
