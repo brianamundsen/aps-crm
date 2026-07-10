@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>APS — Import Athletes</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#060c18;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;font-size:14px;padding:20px}
+h1{font-size:20px;font-weight:800;margin-bottom:4px}
+.sub{color:#64748b;font-size:13px;margin-bottom:20px}
+.card{background:#0d0d0d;border:1px solid #1e3a6b;border-radius:12px;padding:18px;margin-bottom:16px}
+.ctitle{font-size:12px;font-weight:800;color:#f87171;letter-spacing:.08em;text-transform:uppercase;margin-bottom:12px}
+label{display:block;font-size:10px;color:#64748b;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px}
+input[type=text],select{width:100%;background:#080f1e;border:1px solid #1e3a6b;border-radius:8px;padding:9px 11px;color:#e2e8f0;font-size:13px;outline:none;margin-bottom:12px}
+input[type=file]{width:100%;background:#080f1e;border:1px dashed #1e3a6b;border-radius:8px;padding:20px 11px;color:#94a3b8;font-size:13px}
+.btn{background:linear-gradient(135deg,#1d4ed8,#1e40af);border:none;border-radius:9px;padding:12px 22px;color:#fff;font-size:14px;font-weight:800;cursor:pointer;width:100%}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-outline{background:transparent;border:1px solid #243d73;color:#94a3b8;font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+th{padding:6px 8px;text-align:left;font-size:10px;text-transform:uppercase;color:#64748b;border-bottom:1px solid #1a2d50}
+td{padding:6px 8px;border-bottom:1px solid #1a2535;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px}
+.map-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:center;margin-bottom:8px}
+.map-row span{font-size:12px;color:#94a3b8}
+#status{font-size:13px;padding:10px 14px;border-radius:8px;margin-top:12px;display:none}
+.ok{background:rgba(34,197,94,.1);border:1px solid #22c55e;color:#22c55e}
+.err{background:rgba(248,113,113,.1);border:1px solid #f87171;color:#f87171}
+.scrollwrap{overflow-x:auto}
+.hint{font-size:11px;color:#475569;margin-top:-6px;margin-bottom:12px}
+</style>
+</head>
+<body>
+<h1>⚡ Import Athletes</h1>
+<div class="sub">Upload a CSV export from your current CRM to bulk-add athletes to APS.</div>
+
+<div class="card" id="step-location">
+  <div class="ctitle">Step 1 — Location</div>
+  <label>Location Code</label>
+  <input type="text" id="location-code" placeholder="e.g. TEST" style="text-transform:uppercase">
+  <div class="hint">Enter the same code used in your signup/tracker links.</div>
+  <button class="btn" id="btn-find-location">Find Location</button>
+  <div id="location-status"></div>
+</div>
+
+<div class="card" id="step-upload" style="display:none">
+  <div class="ctitle">Step 2 — Upload CSV</div>
+  <input type="file" id="csv-file" accept=".csv">
+  <div class="hint" style="margin-top:8px">Export your roster from your current CRM as a CSV and upload it here.</div>
+</div>
+
+<div class="card" id="step-mapping" style="display:none">
+  <div class="ctitle">Step 3 — Confirm Column Mapping</div>
+  <div id="mapping-rows"></div>
+  <button class="btn btn-outline" id="btn-preview">Preview Import</button>
+</div>
+
+<div class="card" id="step-preview" style="display:none">
+  <div class="ctitle">Step 4 — Preview</div>
+  <div id="preview-summary" style="margin-bottom:10px;font-size:13px;color:#94a3b8"></div>
+  <div class="scrollwrap">
+    <table id="preview-table"></table>
+  </div>
+  <div style="margin-top:14px">
+    <button class="btn" id="btn-import">Import Athletes</button>
+  </div>
+</div>
+
+<div id="status"></div>
+
+<script>
+"use strict";
+
+var SB_URL = "https://nghfnuhssyknbjagldxh.supabase.co";
+var SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5naGZudWhzc3lrbmJqYWdsZHhoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNDc0ODYsImV4cCI6MjA5NjYyMzQ4Nn0.OR40jInOS9VxFtLTK9vHYyFhuJVGwnUoYC60zEJI0CQ";
+var HDRS = {"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json","Prefer":"return=representation"};
+
+var LOCATION = null;
+var CSV_ROWS = []; // array of objects keyed by header
+var CSV_HEADERS = [];
+var MAPPING = {}; // targetField -> source header
+
+var TARGET_FIELDS = [
+  {key:"name", label:"Full Name", required:true, synonyms:["name","full name","client name","member name","athlete name"]},
+  {key:"first_name", label:"First Name (if separate)", required:false, synonyms:["first name","firstname"]},
+  {key:"last_name", label:"Last Name (if separate)", required:false, synonyms:["last name","lastname"]},
+  {key:"dob", label:"Date of Birth", required:false, synonyms:["dob","date of birth","birthday","birth date"]},
+  {key:"age", label:"Age (fallback if no DOB)", required:false, synonyms:["age"]},
+  {key:"gender", label:"Gender", required:false, synonyms:["gender","sex"]},
+  {key:"email", label:"Email", required:false, synonyms:["email","email address","parent email"]},
+  {key:"phone", label:"Phone", required:false, synonyms:["phone","phone number","mobile","contact number"]},
+  {key:"status", label:"Membership Status (to skip inactive)", required:false, synonyms:["status","membership status","active"]}
+];
+
+function toast(msg, ok) {
+  var el = document.getElementById("status");
+  el.textContent = msg;
+  el.className = ok ? "ok" : "err";
+  el.style.display = "block";
+}
+
+/* ---- Simple CSV parser (handles quoted commas) ---- */
+function parseCSV(text) {
+  var rows = [];
+  var row = [];
+  var field = "";
+  var inQuotes = false;
+  for (var i = 0; i < text.length; i++) {
+    var c = text[i], next = text[i+1];
+    if (inQuotes) {
+      if (c === '"' && next === '"') { field += '"'; i++; }
+      else if (c === '"') { inQuotes = false; }
+      else { field += c; }
+    } else {
+      if (c === '"') { inQuotes = true; }
+      else if (c === ",") { row.push(field); field = ""; }
+      else if (c === "\n" || c === "\r") {
+        if (c === "\r" && next === "\n") i++;
+        row.push(field); field = "";
+        if (row.length > 1 || row[0] !== "") rows.push(row);
+        row = [];
+      } else { field += c; }
+    }
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function norm(s) { return (s || "").toString().trim().toLowerCase(); }
+
+function guessMapping(headers) {
+  var used = {};
+  TARGET_FIELDS.forEach(function(tf) {
+    var match = headers.find(function(h) {
+      return !used[h] && tf.synonyms.indexOf(norm(h)) !== -1;
+    });
+    if (match) { MAPPING[tf.key] = match; used[match] = true; }
+  });
+}
+
+/* ---- Step 1: find location ---- */
+document.getElementById("btn-find-location").onclick = async function() {
+  var code = document.getElementById("location-code").value.trim().toUpperCase();
+  if (!code) { document.getElementById("location-status").textContent = "Enter a location code."; return; }
+  try {
+    var res = await fetch(SB_URL + "/rest/v1/aps_locations?code=eq." + encodeURIComponent(code) + "&select=*", {headers: HDRS});
+    var rows = await res.json();
+    if (!rows.length) {
+      document.getElementById("location-status").innerHTML = '<div style="color:#f87171;font-size:12px;margin-top:6px">Location not found.</div>';
+      return;
+    }
+    LOCATION = rows[0];
+    document.getElementById("location-status").innerHTML = '<div style="color:#22c55e;font-size:12px;margin-top:6px">✓ Found: ' + LOCATION.name + '</div>';
+    document.getElementById("step-upload").style.display = "block";
+  } catch (e) {
+    document.getElementById("location-status").innerHTML = '<div style="color:#f87171;font-size:12px;margin-top:6px">Error: ' + e.message + '</div>';
+  }
+};
+
+/* ---- Step 2: parse CSV ---- */
+document.getElementById("csv-file").onchange = function(e) {
+  var file = e.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(ev) {
+    var text = ev.target.result;
+    var table = parseCSV(text).filter(function(r) { return r.length && r.some(function(c){return c.trim()!== "";}); });
+    if (table.length < 2) { toast("CSV appears empty or has no data rows.", false); return; }
+    CSV_HEADERS = table[0].map(function(h){ return h.trim(); });
+    CSV_ROWS = table.slice(1).map(function(r) {
+      var obj = {};
+      CSV_HEADERS.forEach(function(h, i) { obj[h] = (r[i] || "").trim(); });
+      return obj;
+    });
+    guessMapping(CSV_HEADERS);
+    renderMapping();
+    document.getElementById("step-mapping").style.display = "block";
+  };
+  reader.readAsText(file);
+};
+
+/* ---- Step 3: mapping UI ---- */
+function renderMapping() {
+  var wrap = document.getElementById("mapping-rows");
+  wrap.innerHTML = "";
+  TARGET_FIELDS.forEach(function(tf) {
+    var row = document.createElement("div");
+    row.className = "map-row";
+
+    var label = document.createElement("span");
+    label.textContent = tf.label + (tf.required ? " *" : "");
+    row.appendChild(label);
+
+    var sel = document.createElement("select");
+    sel.id = "map-" + tf.key;
+    var noneOpt = document.createElement("option");
+    noneOpt.value = ""; noneOpt.textContent = "— Not in file —";
+    sel.appendChild(noneOpt);
+    CSV_HEADERS.forEach(function(h) {
+      var opt = document.createElement("option");
+      opt.value = h; opt.textContent = h;
+      if (MAPPING[tf.key] === h) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    row.appendChild(sel);
+    wrap.appendChild(row);
+  });
+}
+
+function readMappingFromUI() {
+  TARGET_FIELDS.forEach(function(tf) {
+    var val = document.getElementById("map-" + tf.key).value;
+    if (val) MAPPING[tf.key] = val; else delete MAPPING[tf.key];
+  });
+}
+
+function calcAge(dobStr) {
+  if (!dobStr) return "";
+  var d = new Date(dobStr);
+  if (isNaN(d.getTime())) return "";
+  var today = new Date();
+  var age = today.getFullYear() - d.getFullYear();
+  var m = today.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age--;
+  return (age > 0 && age < 100) ? String(age) : "";
+}
+
+function mapGender(g) {
+  var l = norm(g);
+  if (l === "female" || l === "f" || l === "girl" || l === "girls") return "Girls";
+  return "Boys";
+}
+
+function buildAthleteRecord(row) {
+  var name = MAPPING.name ? row[MAPPING.name] :
+    ((MAPPING.first_name ? row[MAPPING.first_name] : "") + " " + (MAPPING.last_name ? row[MAPPING.last_name] : "")).trim();
+  var dob = MAPPING.dob ? row[MAPPING.dob] : "";
+  var age = dob ? calcAge(dob) : (MAPPING.age ? row[MAPPING.age] : "");
+  var status = MAPPING.status ? norm(row[MAPPING.status]) : "";
+  var isInactive = status && (status.indexOf("inactive") !== -1 || status.indexOf("cancel") !== -1 || status === "no");
+
+  return {
+    valid: !!name && !isInactive,
+    skipReason: !name ? "missing name" : (isInactive ? "inactive status" : ""),
+    record: {
+      name: name || "Unknown",
+      age: age || "",
+      gender: mapGender(MAPPING.gender ? row[MAPPING.gender] : ""),
+      height: "", weight: "", date: "", program: "", notes: "", goals: "",
+      results: {"10 yd split":"","20 yd split":"","40 yd dash":"","Vertical Jump":"","Broad Jump":"","5-10-5 Agility":"","Chin up Hold":""},
+      email: MAPPING.email ? row[MAPPING.email] : "",
+      phone: MAPPING.phone ? row[MAPPING.phone] : "",
+      dob: dob || "",
+      source: "csv_import",
+      evaluations: []
+    }
+  };
+}
+
+document.getElementById("btn-preview").onclick = function() {
+  readMappingFromUI();
+  if (!MAPPING.name && !MAPPING.first_name) {
+    toast("Please map at least a Name field before continuing.", false);
+    return;
+  }
+
+  var built = CSV_ROWS.map(buildAthleteRecord);
+  var valid = built.filter(function(b){ return b.valid; });
+  var skipped = built.filter(function(b){ return !b.valid; });
+
+  document.getElementById("preview-summary").textContent =
+    valid.length + " athletes ready to import" + (skipped.length ? ", " + skipped.length + " skipped (" + skipped.map(function(s){return s.skipReason;}).filter(function(v,i,a){return a.indexOf(v)===i;}).join(", ") + ")" : "");
+
+  var table = document.getElementById("preview-table");
+  table.innerHTML = "";
+  var headRow = document.createElement("tr");
+  ["Name","Age","Gender","Email","Phone"].forEach(function(h) {
+    var th = document.createElement("th"); th.textContent = h; headRow.appendChild(th);
+  });
+  table.appendChild(headRow);
+
+  valid.slice(0, 10).forEach(function(b) {
+    var tr = document.createElement("tr");
+    [b.record.name, b.record.age, b.record.gender, b.record.email, b.record.phone].forEach(function(v) {
+      var td = document.createElement("td"); td.textContent = v || "—"; tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  });
+
+  window._validImport = valid.map(function(b){ return b.record; });
+  document.getElementById("step-preview").style.display = "block";
+};
+
+/* ---- Step 4: import ---- */
+document.getElementById("btn-import").onclick = async function() {
+  var btn = this;
+  btn.disabled = true;
+  btn.textContent = "Importing...";
+
+  var records = window._validImport || [];
+  var success = 0, failed = 0;
+
+  for (var i = 0; i < records.length; i++) {
+    try {
+      var res = await fetch(SB_URL + "/rest/v1/aps_athletes", {
+        method: "POST",
+        headers: HDRS,
+        body: JSON.stringify({ location_id: LOCATION.id, info: JSON.stringify(records[i]) })
+      });
+      if (res.ok) success++; else failed++;
+    } catch (e) {
+      failed++;
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = "Import Athletes";
+  toast("Import complete: " + success + " added" + (failed ? ", " + failed + " failed" : ""), failed === 0);
+};
+
+/* Auto-fill location code from URL if present */
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  var code = params.get("location");
+  if (code) {
+    document.getElementById("location-code").value = code.toUpperCase();
+    document.getElementById("btn-find-location").click();
+  }
+})();
+</script>
+</body>
+</html>
