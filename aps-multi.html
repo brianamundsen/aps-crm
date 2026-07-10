@@ -542,7 +542,7 @@ function buildHeader(){
     var toolsBtn=mk("button","background:transparent;border:1px solid #1e3a6b;border-radius:8px;padding:8px 10px;color:#94a3b8;font-size:11px;font-weight:600;cursor:pointer","🛠 Tools ▾");
     var toolsMenu=div("display:none;position:absolute;top:calc(100% + 6px);right:0;background:#0d1829;border:1px solid #1e3a6b;border-radius:9px;padding:6px;min-width:180px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.4)");
     function toolLink(label,href){
-      var a=mk("a",label);
+      var a=mk("a",null,label);
       a.href=href+(LOCATION.code?("?location="+LOCATION.code):"");
       a.style.cssText="display:block;padding:9px 11px;border-radius:6px;color:#e2e8f0;font-size:13px;font-weight:600;text-decoration:none;white-space:nowrap";
       a.onmouseover=function(){a.style.background="#132040";};
