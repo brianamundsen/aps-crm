@@ -1354,9 +1354,24 @@ function buildAdd(){
   ap(btns,saveBtn,clrBtn);wrap.appendChild(btns);return wrap;
 }
 
+function loadShareAthlete(){
+  apiGet("aps_athletes?id=eq."+SHARE_ID+"&select=*").then(function(rows){
+    if(!rows.length){S.loading=false;S.screen="share";S.athletes=[];render();return;}
+    var r=rows[0];
+    var d=JSON.parse(r.info);d._dbid=r.id;d._locationId=r.location_id;
+    S.athletes=[normAthBJ(d)];
+    S.loading=false;S.screen="share";render();
+    apiGet("aps_locations?id=eq."+r.location_id+"&select=name").then(function(locs){
+      if(locs.length){LOCATION.name=locs[0].name;render();}
+    }).catch(function(){});
+  }).catch(function(err){S.loading=false;S.screen="share";S.athletes=[];render();});
+}
+
 /* ── BOOT ── */
 render();
-if(!LOCATION_CODE){
+if(SHARE_ID!==null){
+  loadShareAthlete();
+} else if(!LOCATION_CODE){
   S.screen="setup";render();
 } else {
   loadLocation().then(function(found){
