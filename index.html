@@ -602,7 +602,7 @@ function buildNav(){
 /* ══════════════════ PIPELINE (CRM) ══════════════════ */
 var STAGES=[["lead","Leads","#60a5fa"],["trial","Trials","#fbbf24"],["active","Active","#34d399"],["inactive","Inactive","#94a3b8"],["lost","Lost","#fb7185"]];
 var ACTC={note:"#94a3b8",call:"#60a5fa",text:"#22d3ee",email:"#a78bfa",meeting:"#fbbf24",eval:"#34d399",stage_change:"#f87171"};
-var PIPE={loaded:false,loading:false,contacts:[],locMap:{},taskCount:0,filter:null,detailId:null,detail:null,detailLoading:false};
+var PIPE={loaded:false,loading:false,contacts:[],locMap:{},taskCount:0,filter:null,detailId:null,detail:null,detailLoading:false,tasksOpen:false,taskList:null};
 var PADD=null;
 
 async function apiPatch(table,filter,body){var r=await fetch(SB_URL+"/rest/v1/"+table+"?"+filter,{method:"PATCH",headers:HDRS,body:JSON.stringify(body)});var t=await r.text();if(!r.ok)throw new Error("HTTP "+r.status+" "+t);return t?JSON.parse(t):[];}
@@ -622,6 +622,39 @@ async function loadPipeline(){
   }catch(e){PIPE.loading=false;toast("Could not load pipeline",false);}
 }
 async function refreshTaskCount(){var q=ADMIN_MODE?"aps_tasks?select=id&done=eq.false":"aps_tasks?select=id&done=eq.false&location_id=eq."+LOCATION.id;var t=await apiGet(q);PIPE.taskCount=t.length;}
+async function loadOpenTasks(){
+try{
+var q=ADMIN_MODE?"aps_tasks?select=*&done=eq.false&order=due_date.asc.nullslast":"aps_tasks?select=*&done=eq.false&location_id=eq."+LOCATION.id+"&order=due_date.asc.nullslast";
+PIPE.taskList=await apiGet(q);render();
+}catch(e){toast("Could not load tasks",false);}
+}
+function closeTasksDue(){PIPE.tasksOpen=false;PIPE.taskList=null;render();}
+function buildTasksDueModal(){
+var root=div("");
+var scrim=mk("div","position:fixed;inset:0;background:rgba(2,6,15,.7);z-index:820");scrim.onclick=closeTasksDue;
+var card=div("position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:460px;max-width:calc(100% - 24px);max-height:80vh;overflow-y:auto;background:#0b1527;border:1px solid #1a2d50;border-radius:14px;z-index:821");
+var hd=div("background:#080f1e;border-bottom:1px solid #1a2d50;padding:15px 18px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0");
+var cl=mk("button","background:#1a2d50;color:#fff;border:none;width:28px;height:28px;border-radius:7px;font-size:17px;cursor:pointer","×");cl.onclick=closeTasksDue;
+ap(hd,mk("div","font-size:16px;font-weight:800;color:#f1f5f9","Tasks Due"),cl);ap(card,hd);
+var bd=div("padding:12px 18px 20px");
+if(PIPE.taskList===null){ap(bd,mk("div","color:#64748b;font-size:13px;text-align:center;padding:30px","Loading..."));}
+else if(!PIPE.taskList.length){ap(bd,mk("div","color:#64748b;font-size:13px;text-align:center;padding:30px","No open follow-ups. 🎉"));}
+else{
+var today=new Date().toISOString().slice(0,10);
+PIPE.taskList.forEach(function(t){
+var c=null;for(var i=0;i<PIPE.contacts.length;i++)if(PIPE.contacts[i].id===t.contact_id)c=PIPE.contacts[i];
+var row=div("display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid #1a2d50");
+var cb=mk("input");cb.type="checkbox";cb.style.cssText="margin-top:2px;width:17px;height:17px;accent-color:#34d399;cursor:pointer";
+cb.onchange=(function(tid){return function(){pipeToggleTask(tid,this.checked);loadOpenTasks();};})(t.id);
+var main=div("flex:1;cursor:pointer");
+main.onclick=(function(cid){return function(){closeTasksDue();pipeOpen(cid);};})(t.contact_id);
+ap(main,mk("div","font-size:14px;color:#f1f5f9",t.title),mk("div","font-size:11px;color:#94a3b8;margin-top:1px",c?pipeName(c):"Unknown contact"));
+if(t.due_date){var od=t.due_date<today;ap(main,mk("div","font-size:11px;margin-top:1px;color:"+(od?"#f87171":"#64748b")+";font-weight:"+(od?"700":"400"),"Due "+t.due_date+(od?" · overdue":"")));}
+ap(row,cb,main);bd.appendChild(row);
+});
+}
+ap(card,bd);root.appendChild(scrim);root.appendChild(card);return root;
+}
 
 async function pipeOpen(id){PIPE.detailId=id;PIPE.detail=null;PIPE.detailLoading=true;render();await loadPipeDetail(id);}
 function pipeClose(){PIPE.detailId=null;PIPE.detail=null;render();}
@@ -682,7 +715,7 @@ function buildPipeline(){
   });
   var tc=mk("button","flex:1;min-width:88px;background:#080f1e;border:1px solid #1a2d50;border-top:3px solid #f87171;border-radius:8px;padding:10px 12px;text-align:left;cursor:pointer");
   ap(tc,mk("div","font-size:26px;font-weight:900;color:#f87171;line-height:1",String(PIPE.taskCount)),mk("div","font-size:10px;color:#64748b;font-weight:700;letter-spacing:.07em;text-transform:uppercase;margin-top:4px","Tasks Due"));
-  tc.onclick=function(){toast(PIPE.taskCount?PIPE.taskCount+" open follow-up(s) at this location":"No open follow-ups",true);};
+  tc.onclick=function(){PIPE.tasksOpen=true;PIPE.taskList=null;render();loadOpenTasks();};
   sc.appendChild(tc);
   if(!ADMIN_READONLY){var addB=mk("button","flex-shrink:0;background:#dc2626;color:#fff;border:none;border-radius:8px;padding:0 16px;font-weight:700;font-size:13px;cursor:pointer;align-self:stretch","+ Add");addB.onclick=pipeAddOpen;sc.appendChild(addB);}
   ap(wrap,sc);
@@ -694,6 +727,7 @@ function buildPipeline(){
     ap(wrap,emp);
     if(PIPE.detailId!=null)wrap.appendChild(buildPipeDrawer());
     if(PADD)wrap.appendChild(buildPipeAddModal());
+  if(PIPE.tasksOpen)wrap.appendChild(buildTasksDueModal());
     return wrap;
   }
   /* board */
@@ -715,6 +749,7 @@ function buildPipeline(){
   ap(wrap,board);
   if(PIPE.detailId!=null)wrap.appendChild(buildPipeDrawer());
   if(PADD)wrap.appendChild(buildPipeAddModal());
+  if(PIPE.tasksOpen)wrap.appendChild(buildTasksDueModal());
   return wrap;
 }
 function pipeCard(c,accent){
