@@ -604,13 +604,19 @@ function buildNav(){
 /* ══════════════════ PIPELINE (CRM) ══════════════════ */
 var STAGES=[["lead","Leads","#60a5fa"],["trial","Trials","#fbbf24"],["active","Active","#34d399"],["inactive","Inactive","#94a3b8"],["lost","Lost","#fb7185"]];
 var ACTC={note:"#94a3b8",call:"#60a5fa",text:"#22d3ee",email:"#a78bfa",meeting:"#fbbf24",eval:"#34d399",stage_change:"#f87171"};
-var PIPE={loaded:false,loading:false,contacts:[],locMap:{},taskCount:0,filter:null,detailId:null,detail:null,detailLoading:false,tasksOpen:false,taskList:null};
+var PIPE={loaded:false,loading:false,contacts:[],locMap:{},taskCount:0,filter:null,detailId:null,detail:null,detailLoading:false,tasksOpen:false,taskList:null,search:""};
 var PADD=null;
 var PAY=null;
 
 async function apiPatch(table,filter,body){var r=await fetch(SB_URL+"/rest/v1/"+table+"?"+filter,{method:"PATCH",headers:HDRS,body:JSON.stringify(body)});var t=await r.text();if(!r.ok)throw new Error("HTTP "+r.status+" "+t);return t?JSON.parse(t):[];}
 
 function pipeName(c){return(((c.first_name||"")+" "+(c.last_name||"")).trim())||"Unnamed contact";}
+function pipeMatchesSearch(c){
+  var q=(PIPE.search||"").trim().toLowerCase();
+  if(!q)return true;
+  var hay=[pipeName(c),c.email,c.phone,c.relationship].filter(Boolean).join(" ").toLowerCase();
+  return hay.indexOf(q)!==-1;
+}
 function stageLabel(k){for(var i=0;i<STAGES.length;i++)if(STAGES[i][0]===k)return STAGES[i][1];return k;}
 function contactLoc(id){if(!ADMIN_MODE)return LOCATION.id;for(var i=0;i<PIPE.contacts.length;i++)if(PIPE.contacts[i].id===id)return PIPE.contacts[i].location_id;return null;}
 function timeAgo(iso){var d=new Date(iso),s=(Date.now()-d.getTime())/1000;if(s<60)return"just now";if(s<3600)return Math.floor(s/60)+"m ago";if(s<86400)return Math.floor(s/3600)+"h ago";if(s<604800)return Math.floor(s/86400)+"d ago";return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});}
@@ -725,6 +731,27 @@ function buildPipeline(){
   if(!ADMIN_READONLY){var addB=mk("button","flex-shrink:0;background:#dc2626;color:#fff;border:none;border-radius:8px;padding:0 16px;font-weight:700;font-size:13px;cursor:pointer;align-self:stretch","+ Add");addB.onclick=pipeAddOpen;sc.appendChild(addB);}
   ap(wrap,sc);
 
+  var searchRow=div("padding:0 12px 10px;flex-shrink:0;display:flex;align-items:center;gap:8px");
+  var searchWrap=div("position:relative;flex:1;max-width:340px");
+  var searchIn=mk("input");searchIn.type="text";searchIn.placeholder="Search name, email, or phone...";searchIn.value=PIPE.search;
+  searchIn.style.cssText="width:100%;background:#0d1829;border:1px solid #1a2d50;border-radius:8px;padding:9px 34px 9px 12px;color:#f1f5f9;font-size:13px";
+  searchIn.addEventListener("input",function(){PIPE.search=this.value;render();
+    var el=document.getElementById("pipe-search-input");if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}
+  });
+  searchIn.id="pipe-search-input";
+  ap(searchWrap,searchIn);
+  if(PIPE.search){
+    var clearB=mk("button","position:absolute;right:6px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:#64748b;font-size:16px;cursor:pointer;padding:4px","×");
+    clearB.onclick=function(){PIPE.search="";render();};
+    ap(searchWrap,clearB);
+  }
+  ap(searchRow,searchWrap);
+  if(PIPE.search){
+    var matchCount=PIPE.contacts.filter(pipeMatchesSearch).length;
+    ap(searchRow,mk("div","font-size:12px;color:#64748b;white-space:nowrap",matchCount+" match"+(matchCount===1?"":"es")));
+  }
+  ap(wrap,searchRow);
+
   if(PIPE.contacts.length===0){
     var emp=div("flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px;color:#64748b");
     ap(emp,mk("div","font-size:18px;font-weight:800;color:#f1f5f9;margin-bottom:6px","No contacts yet"),mk("div","font-size:13px;max-width:330px;line-height:1.5","This location's pipeline is empty. Add your first prospect to start moving people from lead to member."));
@@ -740,14 +767,14 @@ function buildPipeline(){
   var shown=PIPE.filter?STAGES.filter(function(s){return s[0]===PIPE.filter;}):STAGES;
   var total=PIPE.contacts.length||1;
   shown.forEach(function(s){
-    var list=PIPE.contacts.filter(function(c){return c.stage===s[0];});
+    var list=PIPE.contacts.filter(function(c){return c.stage===s[0]&&pipeMatchesSearch(c);});
     var col=div("flex:0 0 280px;min-width:280px;display:flex;flex-direction:column");
     var head=div("display:flex;align-items:center;gap:8px;padding:4px 2px 8px");
     ap(head,mk("div","font-size:22px;font-weight:900;color:"+s[2]+";line-height:1",String(list.length)),mk("div","font-size:13px;font-weight:700;color:#f1f5f9",s[1]));
     ap(col,head);
     var bar=div("height:3px;background:#1a2d50;border-radius:2px;margin:0 2px 10px;overflow:hidden");ap(bar,mk("div","height:100%;background:"+s[2]+";width:"+Math.round(list.length/total*100)+"%"));ap(col,bar);
     var body=div("display:flex;flex-direction:column;gap:8px");
-    if(list.length===0)ap(body,mk("div","color:#475569;font-size:12px;text-align:center;padding:14px;border:1px dashed #1a2d50;border-radius:8px","No one here yet"));
+    if(list.length===0)ap(body,mk("div","color:#475569;font-size:12px;text-align:center;padding:14px;border:1px dashed #1a2d50;border-radius:8px",PIPE.search?"No matches here":"No one here yet"));
     list.forEach(function(c){body.appendChild(pipeCard(c,s[2]));});
     ap(col,body);board.appendChild(col);
   });
