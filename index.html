@@ -607,6 +607,7 @@ var ACTC={note:"#94a3b8",call:"#60a5fa",text:"#22d3ee",email:"#a78bfa",meeting:"
 var PIPE={loaded:false,loading:false,contacts:[],locMap:{},taskCount:0,filter:null,detailId:null,detail:null,detailLoading:false,tasksOpen:false,taskList:null,search:""};
 var PADD=null;
 var PAY=null;
+var MSG=null;
 
 async function apiPatch(table,filter,body){var r=await fetch(SB_URL+"/rest/v1/"+table+"?"+filter,{method:"PATCH",headers:HDRS,body:JSON.stringify(body)});var t=await r.text();if(!r.ok)throw new Error("HTTP "+r.status+" "+t);return t?JSON.parse(t):[];}
 
@@ -806,6 +807,11 @@ function buildPipeDrawer(){
   ap(hd,mk("div","font-size:20px;font-weight:800;color:#f1f5f9;padding-right:34px",pipeName(c)),cl);
   var cline=[];if(c.email)cline.push(c.email);if(c.phone)cline.push(c.phone);if(c.relationship)cline.push(c.relationship);
   ap(hd,mk("div","font-size:12px;color:#64748b;margin-top:4px",cline.join("  ·  ")||"No contact info yet"));
+  var qa=div("display:flex;gap:8px;margin-top:12px");
+  if(c.email){var emB=mk("button","background:#1a2d50;color:#f1f5f9;border:none;border-radius:8px;padding:8px 13px;font-weight:700;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:5px","✉️ Email");emB.onclick=(function(cid){return function(){msgOpen(cid,"email");};})(c.id);qa.appendChild(emB);}
+  if(c.phone){var txB=mk("button","background:#1a2d50;color:#f1f5f9;border:none;border-radius:8px;padding:8px 13px;font-weight:700;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:5px","💬 Text");txB.onclick=(function(cid){return function(){msgOpen(cid,"text");};})(c.id);qa.appendChild(txB);}
+  if(!c.email&&!c.phone)qa=null;
+  if(qa)ap(hd,qa);
   var body=div("flex:1;overflow-y:auto;padding:16px 18px 40px");
 
   if(PIPE.detailLoading||!PIPE.detail){
@@ -1019,6 +1025,61 @@ async function bookConfirm(opt){
 }
 async function cancelContactSignup(sid){
   try{await apiPatch("aps_signups","id=eq."+sid,{status:"cancelled"});toast("Cancelled",true);await loadPipeDetail(PIPE.detailId);}catch(e){toast("Could not cancel",false);}
+}
+/* ── EMAIL / TEXT (native app handoff) ── */
+function msgOpen(contactId,type){
+  var c=null;for(var i=0;i<PIPE.contacts.length;i++)if(PIPE.contacts[i].id===contactId)c=PIPE.contacts[i];
+  if(!c)return;
+  var first=c.first_name||pipeName(c).split(" ")[0]||"there";
+  var loc=LOCATION.name||"our facility";
+  MSG={
+    contactId:contactId,type:type,err:"",
+    subject:type==="email"?"Following up from "+loc:"",
+    body:"Hi "+first+", this is "+loc+" — following up on your training with us. Let me know if you have any questions!"
+  };
+  render();
+}
+function msgClose(){MSG=null;render();}
+async function msgSend(){
+  var c=null;for(var i=0;i<PIPE.contacts.length;i++)if(PIPE.contacts[i].id===MSG.contactId)c=PIPE.contacts[i];
+  if(!c){MSG.err="Contact not found.";render();return;}
+  if(MSG.type==="email"&&!c.email){MSG.err="This contact has no email on file.";render();return;}
+  if(MSG.type==="text"&&!c.phone){MSG.err="This contact has no phone on file.";render();return;}
+  var url;
+  if(MSG.type==="email"){
+    url="mailto:"+encodeURIComponent(c.email)+"?subject="+encodeURIComponent(MSG.subject||"")+"&body="+encodeURIComponent(MSG.body||"");
+  }else{
+    var digits=(c.phone||"").replace(/[^\d+]/g,"");
+    url="sms:"+digits+"?body="+encodeURIComponent(MSG.body||"");
+  }
+  var contactId=MSG.contactId;
+  try{
+    await apiPost("aps_activities",{location_id:contactLoc(contactId),contact_id:contactId,type:MSG.type,body:(MSG.type==="email"?"Emailed: "+(MSG.subject||""):"Texted: "+(MSG.body||"").slice(0,80))});
+  }catch(e){/* non-fatal — still open the native app either way */}
+  MSG=null;render();
+  window.location.href=url;
+  if(PIPE.detailId===contactId)loadPipeDetail(contactId);
+}
+function buildMsgModal(){
+  var root=div("");
+  var scrim=mk("div","position:fixed;inset:0;background:rgba(2,6,15,.7);z-index:870");scrim.onclick=msgClose;
+  var card=div("position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:440px;max-width:calc(100% - 24px);max-height:85vh;overflow-y:auto;background:#0b1527;border:1px solid #1a2d50;border-radius:14px;z-index:871");
+  var hd=div("background:#080f1e;border-bottom:1px solid #1a2d50;padding:15px 18px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0");
+  var cl=mk("button","background:#1a2d50;color:#fff;border:none;width:28px;height:28px;border-radius:7px;font-size:17px;cursor:pointer","×");cl.onclick=msgClose;
+  ap(hd,mk("div","font-size:16px;font-weight:800;color:#f1f5f9",MSG.type==="email"?"✉️ Compose Email":"💬 Compose Text"),cl);ap(card,hd);
+  var bd=div("padding:16px 18px");
+  ap(bd,mk("div","color:#64748b;font-size:12px;margin-bottom:14px","Opens in your "+(MSG.type==="email"?"email app":"messaging app")+" to actually send — this just gets it ready and logs it on the contact."));
+  var IS="width:100%;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:10px 12px;color:#f1f5f9;font-size:14px";
+  if(MSG.type==="email"){
+    var sf=div("margin-bottom:12px");ap(sf,lbl("Subject"));var sin=mk("input");sin.style.cssText=IS;sin.value=MSG.subject;sin.addEventListener("input",function(){MSG.subject=this.value;});ap(sf,sin);ap(bd,sf);
+  }
+  var bf=div("");ap(bf,lbl(MSG.type==="email"?"Message":"Text message"));var bin=mk("textarea");bin.style.cssText=IS+";resize:vertical;min-height:110px;font-family:inherit";bin.value=MSG.body;bin.addEventListener("input",function(){MSG.body=this.value;});ap(bf,bin);ap(bd,bf);
+  if(MSG.err)ap(bd,mk("div","color:#f87171;font-size:13px;margin-top:12px",MSG.err));
+  var foot=div("display:flex;gap:10px;justify-content:flex-end;margin-top:16px");
+  var cancelB=mk("button","background:transparent;border:1px solid #1a2d50;color:#94a3b8;border-radius:8px;padding:10px 16px;font-weight:700;font-size:13px;cursor:pointer","Cancel");cancelB.onclick=msgClose;
+  var sendB=mk("button","background:#dc2626;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-weight:700;font-size:13px;cursor:pointer",MSG.type==="email"?"Open in Email app":"Open in Messages");sendB.onclick=msgSend;
+  ap(foot,cancelB,sendB);ap(bd,foot);ap(card,bd);
+  root.appendChild(scrim);root.appendChild(card);return root;
 }
 function copyBookingLink(contactId){
   var url=window.location.origin+window.location.pathname+"?book="+contactId;
@@ -1261,6 +1322,7 @@ function render(){
   children.forEach(function(c){app.appendChild(c);});
   if(BOOK)app.appendChild(buildBookModal());
   if(PAY)app.appendChild(buildPayModal());
+  if(MSG)app.appendChild(buildMsgModal());
 }
 
 /* ── CAT SCORE ── */
