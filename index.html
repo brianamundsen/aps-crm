@@ -1691,6 +1691,7 @@ function loadShareAthlete(){
 }
 /* ── PARENT SELF-BOOKING (?book=CONTACT_ID) ── */
 async function loadParentBook(){
+  S.loading=false;S.screen="book";render();
   try{
     var rows=await apiGet("aps_contacts?id=eq."+PBOOK_ID+"&select=*");
     if(!rows.length){PB.err="This booking link isn't valid.";PB.loading=false;render();return;}
