@@ -1035,7 +1035,6 @@ function buildClasses(){
   ap(wrap,body);
   if(CLS.editing)wrap.appendChild(buildClassModal());
   if(CLS.session)wrap.appendChild(buildSessionModal());
-  if(BOOK)wrap.appendChild(buildBookModal());
   return wrap;
 }
 function buildClassModal(){
@@ -1161,6 +1160,7 @@ function render(){
   if(ADMIN_MODE)children.push(buildAdminFilterBar());
   children.push(buildContent());
   children.forEach(function(c){app.appendChild(c);});
+  if(BOOK)app.appendChild(buildBookModal());
 }
 
 /* ── CAT SCORE ── */
