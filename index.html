@@ -739,6 +739,7 @@ function buildPipeline(){
   tc.onclick=function(){PIPE.tasksOpen=true;PIPE.taskList=null;render();loadOpenTasks();};
   sc.appendChild(tc);
   if(!ADMIN_READONLY){var addB=mk("button","flex-shrink:0;background:#dc2626;color:#fff;border:none;border-radius:8px;padding:0 16px;font-weight:700;font-size:13px;cursor:pointer;align-self:stretch","+ Add");addB.onclick=pipeAddOpen;sc.appendChild(addB);}
+  if(!ADMIN_MODE&&LOCATION.code){var slB=mk("button","flex-shrink:0;background:#0d1829;border:1px solid #1a2d50;color:#94a3b8;border-radius:8px;padding:0 14px;font-weight:700;font-size:13px;cursor:pointer;align-self:stretch;white-space:nowrap","🔗 Signup Link");slB.onclick=copySignupLink;sc.appendChild(slB);}
   ap(wrap,sc);
 
   var searchRow=div("padding:0 12px 10px;flex-shrink:0;display:flex;align-items:center;gap:8px");
@@ -1089,6 +1090,19 @@ function buildMsgModal(){
   var sendB=mk("button","background:#dc2626;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-weight:700;font-size:13px;cursor:pointer",MSG.type==="email"?"Open in Email app":"Open in Messages");sendB.onclick=msgSend;
   ap(foot,cancelB,sendB);ap(bd,foot);ap(card,bd);
   root.appendChild(scrim);root.appendChild(card);return root;
+}
+function copySignupLink(){
+  var url=window.location.origin+"/signup.html?location="+encodeURIComponent(LOCATION.code);
+  function ok(){toast("Signup link copied!",true);}
+  function fail(){
+    try{
+      var ta=document.createElement("textarea");ta.value=url;ta.style.position="fixed";ta.style.opacity="0";
+      document.body.appendChild(ta);ta.focus();ta.select();document.execCommand("copy");document.body.removeChild(ta);
+      toast("Signup link copied!",true);
+    }catch(e2){toast("Couldn't copy — link: "+url,false);}
+  }
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(url).then(ok).catch(fail);}
+  else fail();
 }
 function copyBookingLink(contactId){
   var url=window.location.origin+window.location.pathname+"?book="+contactId;
