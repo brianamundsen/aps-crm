@@ -295,7 +295,7 @@ function barChart(data,labels,colors,w,h){w=w||320;h=h||140;var pad={t:6,r:8,b:2
 function groupedBar(datasets,labels,w,h){w=w||320;h=h||150;var pad={t:22,r:8,b:26,l:36},cw=w-pad.l-pad.r,ch=h-pad.t-pad.b;var svg=svgE("svg",{width:"100%",height:h,viewBox:"0 0 "+w+" "+h});var n=datasets.length,gw=cw/labels.length,bw=gw*0.65/Math.max(n,1);[0,25,50,75,100].forEach(function(v){var y=pad.t+ch-ch*v/100;svg.appendChild(svgE("line",{x1:pad.l,y1:y,x2:pad.l+cw,y2:y,stroke:"#2a1818","stroke-width":"1"}));var tx=svgE("text",{x:pad.l-3,y:y,"text-anchor":"end","dominant-baseline":"middle",fill:"#64748b","font-size":"9"});tx.textContent=v;svg.appendChild(tx);});labels.forEach(function(lb,li){var gx=pad.l+gw*li;datasets.forEach(function(ds,di){var v=ds.data[li];if(v===null||v===undefined)return;var bh=Math.max(2,ch*v/100),x=gx+(gw-bw*n)/2+bw*di,y=pad.t+ch-bh;svg.appendChild(svgE("rect",{x:x,y:y,width:bw,height:bh,fill:ds.color,rx:"3"}));});var lt=svgE("text",{x:gx+gw/2,y:pad.t+ch+14,"text-anchor":"middle",fill:"#94a3b8","font-size":"10"});lt.textContent=lb;svg.appendChild(lt);});datasets.forEach(function(ds,i){var lx=pad.l+cw-(n-i)*54;svg.appendChild(svgE("rect",{x:lx,y:4,width:9,height:9,fill:ds.color,rx:"2"}));var tx=svgE("text",{x:lx+12,y:9,"dominant-baseline":"middle",fill:"#94a3b8","font-size":"10"});tx.textContent=ds.label;svg.appendChild(tx);});var d=div("width:100%");d.appendChild(svg);return d;}
 
 /* ── RENDER ── */
-function goTab(t){S.tab=t;render();}
+function goTab(t){S.tab=t;if(t==="classes"){CLS.loadedClasses=false;}render();}
 function goSel(id){S.selId=id;S.viewEvalIdx=null;render();}
 function startNewEvaluation(ath){
   ensureEvaluations(ath);
@@ -1035,6 +1035,7 @@ function buildClasses(){
   ap(wrap,body);
   if(CLS.editing)wrap.appendChild(buildClassModal());
   if(CLS.session)wrap.appendChild(buildSessionModal());
+  if(BOOK)wrap.appendChild(buildBookModal());
   return wrap;
 }
 function buildClassModal(){
@@ -1160,7 +1161,6 @@ function render(){
   if(ADMIN_MODE)children.push(buildAdminFilterBar());
   children.push(buildContent());
   children.forEach(function(c){app.appendChild(c);});
-  if(BOOK)app.appendChild(buildBookModal());
 }
 
 /* ── CAT SCORE ── */
