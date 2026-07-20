@@ -591,7 +591,7 @@ function buildAdminFilterBar(){
 
 function buildNav(){
   var nav=div("background:#060c18;border-bottom:1px solid #1a2d50;display:flex;padding:0 12px;flex-shrink:0;overflow-x:auto");
-  var tabs=[["roster","🏃 Roster"],["score","🏆 APS Score"],["analytics","📊 Analytics"],["pipeline","🎯 Pipeline"]];
+  var tabs=[["roster","🏃 Roster"],["score","🏆 APS Score"],["analytics","📊 Analytics"],["pipeline","🎯 Pipeline"],["classes","📅 Classes"]];
   if(!ADMIN_READONLY)tabs.push(["add","➕ Add Athlete"]);
   tabs.forEach(function(item){
     var b=mk("button","","");b.className="tab-btn"+(S.tab===item[0]?" active":"");b.textContent=item[1];
@@ -663,7 +663,9 @@ async function loadPipeDetail(id){
     var acts=await apiGet("aps_activities?contact_id=eq."+id+"&select=*&order=created_at.desc&limit=50");
     var tasks=await apiGet("aps_tasks?contact_id=eq."+id+"&select=*&order=done.asc,due_date.asc.nullslast");
     var mem=await apiGet("aps_memberships?contact_id=eq."+id+"&status=eq.active&select=plan_name,status,price_cents,billing_interval&limit=1");
-    PIPE.detail={acts:acts,tasks:tasks,mem:(mem&&mem[0])||null};PIPE.detailLoading=false;
+    var today=new Date().toISOString().slice(0,10);
+    var sig=[];try{sig=await apiGet("aps_signups?contact_id=eq."+id+"&session_date=gte."+today+"&status=neq.cancelled&select=*,aps_classes(title,start_time)&order=session_date.asc");}catch(e2){}
+    PIPE.detail={acts:acts,tasks:tasks,mem:(mem&&mem[0])||null,signups:sig};PIPE.detailLoading=false;
     if(PIPE.detailId===id)render();
   }catch(e){PIPE.detailLoading=false;toast("Could not load contact",false);}
 }
@@ -797,6 +799,22 @@ function buildPipeDrawer(){
   if(PIPE.detail.mem){var m=PIPE.detail.mem;ap(memSec,mk("span","display:inline-flex;align-items:center;gap:6px;background:rgba(52,211,153,.14);color:#34d399;font-weight:700;font-size:12px;padding:6px 12px;border-radius:99px","● "+(m.plan_name||"Member")+" · $"+(m.price_cents/100).toFixed(0)+"/"+m.billing_interval));}
   else ap(memSec,mk("div","color:#64748b;font-size:13px","No active membership"));
   ap(body,memSec);
+  /* Upcoming Sessions */
+  var sessSec=div("margin-bottom:20px");ap(sessSec,secH("Upcoming Sessions"));
+  var sigs=PIPE.detail.signups||[];
+  if(sigs.length){
+    sigs.forEach(function(sg){
+      var cls=sg.aps_classes||{};
+      var row=div("display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #1a2d50");
+      var main=div("");
+      ap(main,mk("div","font-size:13px;color:#f1f5f9;font-weight:700",sg.session_date+(sg.status==="attended"?" · attended":sg.status==="no_show"?" · no-show":"")),mk("div","font-size:11px;color:#94a3b8;margin-top:1px",(cls.title||"Class")+(cls.start_time?" · "+fmtTime(cls.start_time):"")));
+      ap(row,main);
+      if(!ro){var xb=mk("button","background:transparent;border:1px solid #1a2d50;color:#f87171;border-radius:7px;width:26px;height:26px;font-size:14px;cursor:pointer","×");xb.title="Cancel booking";xb.onclick=(function(sid){return function(){cancelContactSignup(sid);};})(sg.id);row.appendChild(xb);}
+      sessSec.appendChild(row);
+    });
+  }else ap(sessSec,mk("div","color:#475569;font-size:12px;padding:8px 0","No upcoming sessions booked."));
+  if(!ro){var bookBtn=mk("button","background:#1a2d50;color:#f1f5f9;border:none;border-radius:8px;padding:9px 14px;font-weight:700;font-size:13px;cursor:pointer;margin-top:8px","+ Book a session");bookBtn.onclick=(function(cid){return function(){bookOpenForContact(cid);};})(c.id);ap(sessSec,bookBtn);}
+  ap(body,sessSec);
   /* Follow-ups */
   var taskSec=div("margin-bottom:20px");ap(taskSec,secH("Follow-ups"));
   var today=new Date().toISOString().slice(0,10);
@@ -873,12 +891,261 @@ function buildPipeAddModal(){
 }
 /* ══════════════════ END PIPELINE ══════════════════ */
 
+/* ══════════════════ CLASSES / SCHEDULING ══════════════════ */
+var CLS={loadedClasses:false,loadingClasses:false,list:[],weekOffset:0,signups:[],editing:null,session:null};
+var BOOK=null;
+var DAY_NAMES=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function fmtTime(t){if(!t)return"";var p=String(t).split(":");var h=parseInt(p[0]),m=p[1]||"00";var ap2=h>=12?"PM":"AM";var hh=h%12;if(hh===0)hh=12;return hh+":"+m+" "+ap2;}
+function dstr(d){return d.toISOString().slice(0,10);}
+function weekDates(offset){
+  var d=new Date();d.setHours(0,0,0,0);var day=d.getDay();d.setDate(d.getDate()-day+offset*7);
+  var out=[];for(var i=0;i<7;i++){var dd=new Date(d);dd.setDate(d.getDate()+i);out.push(dd);}
+  return out;
+}
+async function ensureContactsForClasses(){
+  if(PIPE.contacts&&PIPE.contacts.length)return;
+  try{var q=ADMIN_MODE?"aps_contacts?select=*":"aps_contacts?location_id=eq."+LOCATION.id+"&select=*";PIPE.contacts=await apiGet(q);}catch(e){}
+}
+async function loadClasses(){
+  try{
+    var q=ADMIN_MODE?"aps_classes?select=*&order=day_of_week.asc,start_time.asc":"aps_classes?location_id=eq."+LOCATION.id+"&select=*&order=day_of_week.asc,start_time.asc";
+    CLS.list=await apiGet(q);CLS.loadedClasses=true;CLS.loadingClasses=false;
+    await ensureContactsForClasses();
+    await loadWeekSignups();
+  }catch(e){CLS.loadingClasses=false;toast("Could not load classes",false);render();}
+}
+async function loadWeekSignups(){
+  var dates=weekDates(CLS.weekOffset);
+  var start=dstr(dates[0]),end=dstr(dates[6]);
+  try{
+    var q=ADMIN_MODE?"aps_signups?select=*&session_date=gte."+start+"&session_date=lte."+end:"aps_signups?select=*&location_id=eq."+LOCATION.id+"&session_date=gte."+start+"&session_date=lte."+end;
+    CLS.signups=await apiGet(q);
+  }catch(e){toast("Could not load signups",false);}
+  render();
+}
+function classSignupsFor(classId,dateStr){return CLS.signups.filter(function(s){return s.class_id===classId&&s.session_date===dateStr&&s.status!=="cancelled";});}
+function classOpenAdd(){CLS.editing={id:null,title:"",day_of_week:1,start_time:"16:00",duration_minutes:60,capacity:12,coach:"",active:true,err:""};render();}
+function classOpenEdit(c){CLS.editing={id:c.id,title:c.title,day_of_week:c.day_of_week,start_time:c.start_time.slice(0,5),duration_minutes:c.duration_minutes,capacity:c.capacity,coach:c.coach||"",active:c.active,err:""};CLS.session=null;render();}
+function classClose(){CLS.editing=null;render();}
+async function classSave(){
+  var e=CLS.editing;
+  if(!e.title.trim()){e.err="Give the class a name.";render();return;}
+  var rec={location_id:LOCATION.id,title:e.title.trim(),day_of_week:parseInt(e.day_of_week),start_time:e.start_time,duration_minutes:parseInt(e.duration_minutes)||60,capacity:parseInt(e.capacity)||12,coach:e.coach.trim()||null,active:!!e.active};
+  try{
+    if(e.id)await apiPatch("aps_classes","id=eq."+e.id,rec);else await apiPost("aps_classes",rec);
+    CLS.editing=null;toast("Class saved",true);CLS.loadedClasses=false;render();loadClasses();
+  }catch(err){e.err="Could not save: "+err.message;render();}
+}
+async function classDelete(id){
+  try{await apiDelete("aps_classes","id=eq."+id);CLS.editing=null;CLS.session=null;toast("Class removed",true);CLS.loadedClasses=false;render();loadClasses();}
+  catch(e){toast("Could not delete",false);}
+}
+function openSession(c,dateStr){CLS.session={class:c,date:dateStr,addContactId:"",err:""};render();}
+function closeSession(){CLS.session=null;render();}
+async function sessionBook(){
+  var s=CLS.session,c=s.class;
+  if(!s.addContactId){s.err="Pick a contact first.";render();return;}
+  var used=classSignupsFor(c.id,s.date).length;
+  if(used>=c.capacity){s.err="This session is full.";render();return;}
+  try{
+    await apiPost("aps_signups",{location_id:c.location_id,class_id:c.id,contact_id:parseInt(s.addContactId),session_date:s.date,status:"booked"});
+    s.addContactId="";s.err="";toast("Booked",true);await loadWeekSignups();
+  }catch(e){s.err="Could not book — they may already be booked for this session.";render();}
+}
+async function sessionSetStatus(signupId,status){
+  try{await apiPatch("aps_signups","id=eq."+signupId,{status:status});await loadWeekSignups();}catch(e){toast("Could not update",false);}
+}
+function bookOpenForContact(contactId){BOOK={contactId:contactId,err:"",loading:true,options:null};render();loadBookOptions();}
+function bookClose(){BOOK=null;render();}
+async function loadBookOptions(){
+  try{
+    if(!CLS.loadedClasses){var q=ADMIN_MODE?"aps_classes?select=*&active=eq.true":"aps_classes?location_id=eq."+LOCATION.id+"&select=*&active=eq.true";CLS.list=await apiGet(q);CLS.loadedClasses=true;}
+    var today=new Date();today.setHours(0,0,0,0);
+    var opts=[];
+    for(var i=0;i<14;i++){
+      var d=new Date(today);d.setDate(today.getDate()+i);var dow=d.getDay(),ds=dstr(d);
+      CLS.list.filter(function(c){return c.active&&c.day_of_week===dow;}).forEach(function(c){opts.push({class:c,date:ds});});
+    }
+    var start=dstr(today),endD=new Date(today);endD.setDate(today.getDate()+13);var end=dstr(endD);
+    var q2=ADMIN_MODE?"aps_signups?select=*&session_date=gte."+start+"&session_date=lte."+end:"aps_signups?select=*&location_id=eq."+LOCATION.id+"&session_date=gte."+start+"&session_date=lte."+end;
+    var su=await apiGet(q2);
+    opts.forEach(function(o){o.count=su.filter(function(s){return s.class_id===o.class.id&&s.session_date===o.date&&s.status!=="cancelled";}).length;o.left=o.class.capacity-o.count;});
+    opts.sort(function(a,b){return(a.date+a.class.start_time).localeCompare(b.date+b.class.start_time);});
+    BOOK.options=opts;BOOK.loading=false;render();
+  }catch(e){BOOK.err="Could not load available classes.";BOOK.loading=false;render();}
+}
+async function bookConfirm(opt){
+  if(opt.left<=0){toast("That session is full",false);return;}
+  try{
+    await apiPost("aps_signups",{location_id:contactLoc(BOOK.contactId),class_id:opt.class.id,contact_id:BOOK.contactId,session_date:opt.date,status:"booked"});
+    toast("Booked!",true);var cid=BOOK.contactId;BOOK=null;await loadPipeDetail(cid);
+  }catch(e){toast("Could not book — already booked for this session?",false);}
+}
+async function cancelContactSignup(sid){
+  try{await apiPatch("aps_signups","id=eq."+sid,{status:"cancelled"});toast("Cancelled",true);await loadPipeDetail(PIPE.detailId);}catch(e){toast("Could not cancel",false);}
+}
+function buildClasses(){
+  var wrap=div("flex:1;display:flex;flex-direction:column;overflow:hidden");
+  if(!CLS.loadedClasses){
+    if(!CLS.loadingClasses){CLS.loadingClasses=true;setTimeout(loadClasses,0);}
+    ap(wrap,mk("div","flex:1;display:flex;align-items:center;justify-content:center;color:#3b82f6;font-size:14px;font-weight:700","⚡ Loading classes..."));
+    return wrap;
+  }
+  var hd=div("display:flex;align-items:center;justify-content:space-between;padding:12px 14px;flex-shrink:0;gap:8px;flex-wrap:wrap");
+  var nav=div("display:flex;align-items:center;gap:8px");
+  var prevB=mk("button","background:#0d1829;border:1px solid #1a2d50;color:#94a3b8;border-radius:8px;padding:7px 11px;font-size:13px;cursor:pointer","‹");
+  prevB.onclick=function(){CLS.weekOffset--;loadWeekSignups();};
+  var nextB=mk("button","background:#0d1829;border:1px solid #1a2d50;color:#94a3b8;border-radius:8px;padding:7px 11px;font-size:13px;cursor:pointer","›");
+  nextB.onclick=function(){CLS.weekOffset++;loadWeekSignups();};
+  var dates=weekDates(CLS.weekOffset);
+  var label=dates[0].toLocaleDateString(undefined,{month:"short",day:"numeric"})+" – "+dates[6].toLocaleDateString(undefined,{month:"short",day:"numeric"})+(CLS.weekOffset===0?" · This week":"");
+  ap(nav,prevB,mk("div","font-size:13px;font-weight:700;color:#f1f5f9;white-space:nowrap",label),nextB);
+  ap(hd,nav);
+  if(!ADMIN_READONLY){var addB=mk("button","background:#dc2626;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-weight:700;font-size:12px;cursor:pointer","+ Class");addB.onclick=classOpenAdd;ap(hd,addB);}
+  ap(wrap,hd);
+  var body=div("flex:1;overflow-y:auto;padding:0 12px 16px;display:flex;flex-direction:column;gap:14px");
+  if(!CLS.list.length){
+    ap(body,mk("div","color:#64748b;font-size:13px;text-align:center;padding:40px 20px;line-height:1.5","No classes on the schedule yet.\nAdd your weekly sessions to start tracking capacity and signups."));
+  }
+  var anyThisWeek=false;
+  dates.forEach(function(d,dow){
+    var dateStr=dstr(d);
+    var todays=CLS.list.filter(function(c){return c.day_of_week===dow&&c.active;}).sort(function(a,b){return a.start_time.localeCompare(b.start_time);});
+    if(!todays.length)return;
+    anyThisWeek=true;
+    var isToday=dateStr===dstr(new Date());
+    var dayCard=div("");
+    ap(dayCard,mk("div","font-size:12px;font-weight:700;color:"+(isToday?"#f87171":"#94a3b8")+";text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;padding-left:2px",DAY_NAMES[dow]+" "+d.getDate()+(isToday?" · Today":"")));
+    var row=div("display:flex;flex-direction:column;gap:6px");
+    todays.forEach(function(c){
+      var used=classSignupsFor(c.id,dateStr).length;
+      var left=c.capacity-used;
+      var col=left<=0?"#f87171":left<=2?"#fbbf24":"#34d399";
+      var card=mk("button","width:100%;text-align:left;background:#080f1e;border:1px solid #1a2d50;border-left:3px solid "+col+";border-radius:9px;padding:10px 13px;cursor:pointer");
+      var top=div("display:flex;justify-content:space-between;align-items:center;gap:8px");
+      ap(top,mk("div","font-weight:700;font-size:13px;color:#f1f5f9",fmtTime(c.start_time)+" · "+c.title),mk("div","font-size:12px;font-weight:800;color:"+col+";white-space:nowrap",used+"/"+c.capacity));
+      card.appendChild(top);
+      if(c.coach)card.appendChild(mk("div","font-size:11px;color:#64748b;margin-top:2px","Coach: "+c.coach));
+      card.onclick=(function(cc,ds){return function(){openSession(cc,ds);};})(c,dateStr);
+      row.appendChild(card);
+    });
+    ap(dayCard,row);body.appendChild(dayCard);
+  });
+  if(CLS.list.length&&!anyThisWeek)ap(body,mk("div","color:#64748b;font-size:13px;text-align:center;padding:30px 20px","No sessions scheduled this week."));
+  ap(wrap,body);
+  if(CLS.editing)wrap.appendChild(buildClassModal());
+  if(CLS.session)wrap.appendChild(buildSessionModal());
+  if(BOOK)wrap.appendChild(buildBookModal());
+  return wrap;
+}
+function buildClassModal(){
+  var e=CLS.editing;
+  var root=div("");
+  var scrim=mk("div","position:fixed;inset:0;background:rgba(2,6,15,.7);z-index:840");scrim.onclick=classClose;
+  var card=div("position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:420px;max-width:calc(100% - 24px);max-height:88vh;overflow-y:auto;background:#0b1527;border:1px solid #1a2d50;border-radius:14px;z-index:841");
+  var hd=div("background:#080f1e;border-bottom:1px solid #1a2d50;padding:15px 18px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0");
+  var cl=mk("button","background:#1a2d50;color:#fff;border:none;width:28px;height:28px;border-radius:7px;font-size:17px;cursor:pointer","×");cl.onclick=classClose;
+  ap(hd,mk("div","font-size:16px;font-weight:800;color:#f1f5f9",e.id?"Edit class":"New class"),cl);ap(card,hd);
+  var bd=div("padding:16px 18px");
+  var IS="width:100%;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:10px 12px;color:#f1f5f9;font-size:14px";
+  var tf=div("margin-bottom:12px");ap(tf,lbl("Class name"));var tin=mk("input");tin.style.cssText=IS;tin.value=e.title;tin.placeholder="e.g. Speed & Agility U12";tin.addEventListener("input",function(){e.title=this.value;});ap(tf,tin);ap(bd,tf);
+  var r1=div("display:grid;grid-template-columns:1fr 1fr;gap:10px");
+  var df=div("");ap(df,lbl("Day"));var dsel=mk("select");dsel.style.cssText=IS;DAY_NAMES.forEach(function(n,i){var op=mk("option",null,n);op.value=i;if(e.day_of_week===i)op.selected=true;dsel.appendChild(op);});dsel.addEventListener("change",function(){e.day_of_week=parseInt(this.value);});ap(df,dsel);
+  var tf2=div("");ap(tf2,lbl("Start time"));var tin2=mk("input");tin2.type="time";tin2.style.cssText=IS;tin2.value=e.start_time;tin2.addEventListener("input",function(){e.start_time=this.value;});ap(tf2,tin2);
+  ap(r1,df,tf2);ap(bd,r1);
+  var r2=div("display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px");
+  var durf=div("");ap(durf,lbl("Duration (min)"));var durin=mk("input");durin.type="number";durin.style.cssText=IS;durin.value=e.duration_minutes;durin.addEventListener("input",function(){e.duration_minutes=this.value;});ap(durf,durin);
+  var capf=div("");ap(capf,lbl("Capacity"));var capin=mk("input");capin.type="number";capin.style.cssText=IS;capin.value=e.capacity;capin.addEventListener("input",function(){e.capacity=this.value;});ap(capf,capin);
+  ap(r2,durf,capf);ap(bd,r2);
+  var cf=div("margin-top:12px");ap(cf,lbl("Coach"));var cin=mk("input");cin.style.cssText=IS;cin.value=e.coach;cin.addEventListener("input",function(){e.coach=this.value;});ap(cf,cin);ap(bd,cf);
+  var af=div("margin-top:12px;display:flex;align-items:center;gap:8px");var ain=mk("input");ain.type="checkbox";ain.checked=e.active;ain.style.cssText="width:17px;height:17px;accent-color:#34d399;cursor:pointer";ain.addEventListener("change",function(){e.active=this.checked;});ap(af,ain,mk("span","font-size:13px;color:#94a3b8","Active (shows on schedule)"));ap(bd,af);
+  if(e.err)ap(bd,mk("div","color:#f87171;font-size:13px;margin-top:12px",e.err));
+  var foot=div("display:flex;gap:10px;justify-content:space-between;margin-top:16px");
+  var leftFoot=div("");
+  if(e.id){var delB=mk("button","background:transparent;border:1px solid rgba(248,113,113,.4);color:#f87171;border-radius:8px;padding:10px 14px;font-weight:700;font-size:13px;cursor:pointer","Delete");delB.onclick=function(){classDelete(e.id);};leftFoot.appendChild(delB);}
+  var rightFoot=div("display:flex;gap:10px");
+  var cancelB=mk("button","background:transparent;border:1px solid #1a2d50;color:#94a3b8;border-radius:8px;padding:10px 16px;font-weight:700;font-size:13px;cursor:pointer","Cancel");cancelB.onclick=classClose;
+  var saveB=mk("button","background:#dc2626;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-weight:700;font-size:13px;cursor:pointer","Save");saveB.onclick=classSave;
+  ap(rightFoot,cancelB,saveB);ap(foot,leftFoot,rightFoot);ap(bd,foot);ap(card,bd);
+  root.appendChild(scrim);root.appendChild(card);return root;
+}
+function buildSessionModal(){
+  var s=CLS.session,c=s.class;
+  var root=div("");
+  var scrim=mk("div","position:fixed;inset:0;background:rgba(2,6,15,.7);z-index:830");scrim.onclick=closeSession;
+  var card=div("position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:460px;max-width:calc(100% - 24px);max-height:85vh;overflow-y:auto;background:#0b1527;border:1px solid #1a2d50;border-radius:14px;z-index:831");
+  var hd=div("background:#080f1e;border-bottom:1px solid #1a2d50;padding:15px 18px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0");
+  var cl=mk("button","background:#1a2d50;color:#fff;border:none;width:28px;height:28px;border-radius:7px;font-size:17px;cursor:pointer","×");cl.onclick=closeSession;
+  var htitle=div("");ap(htitle,mk("div","font-size:16px;font-weight:800;color:#f1f5f9",c.title),mk("div","font-size:12px;color:#94a3b8;margin-top:2px",s.date+" · "+fmtTime(c.start_time)+(c.coach?" · "+c.coach:"")));
+  ap(hd,htitle,cl);ap(card,hd);
+  var bd=div("padding:16px 18px");
+  var roster=classSignupsFor(c.id,s.date);
+  var used=roster.length,left=c.capacity-used;
+  ap(bd,mk("div","font-size:13px;font-weight:700;color:"+(left<=0?"#f87171":"#34d399")+";margin-bottom:12px",used+" / "+c.capacity+" booked"+(left<=0?" · FULL":" · "+left+" spot"+(left===1?"":"s")+" left")));
+  if(roster.length){
+    roster.forEach(function(sg){
+      var ct=null;for(var i=0;i<PIPE.contacts.length;i++)if(PIPE.contacts[i].id===sg.contact_id)ct=PIPE.contacts[i];
+      var row=div("display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #1a2d50;gap:8px");
+      ap(row,mk("div","font-size:13px;color:"+(sg.status==="no_show"?"#f87171":"#f1f5f9")+(sg.status==="attended"?";font-weight:700":""),(ct?pipeName(ct):"Unknown")+(sg.status==="attended"?" ✓":sg.status==="no_show"?" (no-show)":"")));
+      if(!ADMIN_READONLY){
+        var btns=div("display:flex;gap:4px");
+        var aB=mk("button","background:"+(sg.status==="attended"?"#34d399":"transparent")+";border:1px solid #34d399;color:"+(sg.status==="attended"?"#060c18":"#34d399")+";border-radius:6px;padding:4px 8px;font-size:11px;font-weight:700;cursor:pointer","✓");aB.title="Mark attended";aB.onclick=(function(sid){return function(){sessionSetStatus(sid,"attended");};})(sg.id);
+        var nB=mk("button","background:transparent;border:1px solid #fbbf24;color:#fbbf24;border-radius:6px;padding:4px 8px;font-size:11px;font-weight:700;cursor:pointer","NS");nB.title="Mark no-show";nB.onclick=(function(sid){return function(){sessionSetStatus(sid,"no_show");};})(sg.id);
+        var xB=mk("button","background:transparent;border:1px solid #1a2d50;color:#94a3b8;border-radius:6px;padding:4px 8px;font-size:11px;font-weight:700;cursor:pointer","×");xB.title="Cancel";xB.onclick=(function(sid){return function(){sessionSetStatus(sid,"cancelled");};})(sg.id);
+        ap(btns,aB,nB,xB);row.appendChild(btns);
+      }
+      bd.appendChild(row);
+    });
+  }else ap(bd,mk("div","color:#475569;font-size:12px;padding:8px 0","No one booked yet."));
+  if(!ADMIN_READONLY){
+    var addRow=div("display:flex;gap:6px;margin-top:14px");
+    var sel=mk("select");sel.style.cssText="flex:1;background:#080f1e;border:1px solid #1a2d50;border-radius:8px;padding:9px 11px;color:#f1f5f9;font-size:13px";
+    var defOp=mk("option",null,"Add a contact...");defOp.value="";sel.appendChild(defOp);
+    var bookedIds=roster.map(function(sg){return sg.contact_id;});
+    PIPE.contacts.filter(function(pc){return bookedIds.indexOf(pc.id)===-1;}).forEach(function(pc){var op=mk("option",null,pipeName(pc));op.value=pc.id;if(String(s.addContactId)===String(pc.id))op.selected=true;sel.appendChild(op);});
+    sel.addEventListener("change",function(){s.addContactId=this.value;});
+    var bkB=mk("button","background:#1a2d50;color:#f1f5f9;border:none;border-radius:8px;padding:9px 14px;font-weight:700;font-size:13px;cursor:pointer","Book");bkB.onclick=sessionBook;
+    ap(addRow,sel,bkB);bd.appendChild(addRow);
+    if(s.err)bd.appendChild(mk("div","color:#f87171;font-size:12px;margin-top:8px",s.err));
+    var editRow=div("display:flex;justify-content:flex-end;margin-top:16px");
+    var editB=mk("button","background:transparent;border:1px solid #1a2d50;color:#64748b;border-radius:8px;padding:8px 12px;font-weight:600;font-size:12px;cursor:pointer","✎ Edit this class");editB.onclick=function(){classOpenEdit(c);};
+    ap(editRow,editB);bd.appendChild(editRow);
+  }
+  ap(card,bd);root.appendChild(scrim);root.appendChild(card);return root;
+}
+function buildBookModal(){
+  var root=div("");
+  var scrim=mk("div","position:fixed;inset:0;background:rgba(2,6,15,.7);z-index:850");scrim.onclick=bookClose;
+  var card=div("position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:420px;max-width:calc(100% - 24px);max-height:85vh;overflow-y:auto;background:#0b1527;border:1px solid #1a2d50;border-radius:14px;z-index:851");
+  var hd=div("background:#080f1e;border-bottom:1px solid #1a2d50;padding:15px 18px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0");
+  var cl=mk("button","background:#1a2d50;color:#fff;border:none;width:28px;height:28px;border-radius:7px;font-size:17px;cursor:pointer","×");cl.onclick=bookClose;
+  ap(hd,mk("div","font-size:16px;font-weight:800;color:#f1f5f9","Book a session"),cl);ap(card,hd);
+  var bd=div("padding:12px 18px 18px");
+  if(BOOK.loading){ap(bd,mk("div","color:#64748b;font-size:13px;text-align:center;padding:30px","Loading..."));}
+  else if(BOOK.err){ap(bd,mk("div","color:#f87171;font-size:13px;text-align:center;padding:20px",BOOK.err));}
+  else if(!BOOK.options||!BOOK.options.length){ap(bd,mk("div","color:#64748b;font-size:13px;text-align:center;padding:30px","No active classes on the schedule for the next two weeks."));}
+  else{
+    BOOK.options.forEach(function(o){
+      var full=o.left<=0;
+      var row=mk("button","width:100%;text-align:left;background:#080f1e;border:1px solid #1a2d50;border-radius:9px;padding:10px 13px;margin-bottom:8px;cursor:"+(full?"default":"pointer")+";opacity:"+(full?"0.5":"1"));
+      var top=div("display:flex;justify-content:space-between;align-items:center");
+      ap(top,mk("div","font-weight:700;font-size:13px;color:#f1f5f9",o.date+" · "+fmtTime(o.class.start_time)),mk("div","font-size:11px;font-weight:800;color:"+(full?"#f87171":"#34d399"),full?"FULL":o.left+" left"));
+      ap(row,top,mk("div","font-size:12px;color:#94a3b8;margin-top:2px",o.class.title+(o.class.coach?" · "+o.class.coach:"")));
+      if(!full)row.onclick=(function(opt){return function(){bookConfirm(opt);};})(o);
+      bd.appendChild(row);
+    });
+  }
+  ap(card,bd);root.appendChild(scrim);root.appendChild(card);return root;
+}
+/* ══════════════════ END CLASSES ══════════════════ */
+
 function buildContent(){
   var c=div("flex:1;display:flex;overflow:hidden");
   if(S.tab==="roster")c.appendChild(buildRoster());
   else if(S.tab==="score")c.appendChild(buildScore());
   else if(S.tab==="analytics")c.appendChild(buildAnalytics());
   else if(S.tab==="pipeline")c.appendChild(buildPipeline());
+  else if(S.tab==="classes")c.appendChild(buildClasses());
   else if(!ADMIN_READONLY)c.appendChild(buildAdd());
   return c;
 }
