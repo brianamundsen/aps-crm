@@ -45,6 +45,8 @@ function toast(msg,ok){var t=document.getElementById("toast");t.textContent=msg;
 var params=new URLSearchParams(window.location.search);
 var LOCATION_CODE=(params.get("location")||"").toUpperCase().trim();
 var SHARE_ID=params.get("athlete")?parseInt(params.get("athlete")):null;
+var PBOOK_ID=params.get("book")?parseInt(params.get("book")):null;
+var PB={contact:null,locationName:"",classes:[],signups:[],loading:true,err:""};
 var LOCATION={id:null,name:"",code:""};
 var ADMIN_MODE=false;
 var ADMIN_READONLY=false;
@@ -1174,6 +1176,7 @@ function render(){
   if(S.screen==="setup"){app.appendChild(buildSetup());return;}
   if(S.screen==="register"){app.appendChild(buildRegister());return;}
   if(S.screen==="setpassword"){app.appendChild(buildSetPassword());return;}
+  if(PBOOK_ID!==null){app.appendChild(buildParentBookView());return;}
   if(SHARE_ID!==null){app.appendChild(buildShareView());return;}
   var children=[buildHeader(),buildNav()];
   if(ADMIN_MODE)children.push(buildAdminFilterBar());
@@ -1686,10 +1689,95 @@ function loadShareAthlete(){
     }).catch(function(){});
   }).catch(function(err){S.loading=false;S.screen="share";S.athletes=[];render();});
 }
+/* ── PARENT SELF-BOOKING (?book=CONTACT_ID) ── */
+async function loadParentBook(){
+  try{
+    var rows=await apiGet("aps_contacts?id=eq."+PBOOK_ID+"&select=*");
+    if(!rows.length){PB.err="This booking link isn't valid.";PB.loading=false;render();return;}
+    PB.contact=rows[0];render();
+    try{var locs=await apiGet("aps_locations?id=eq."+PB.contact.location_id+"&select=name");PB.locationName=(locs&&locs[0]&&locs[0].name)||"";}catch(e2){}
+    await loadParentBookData();
+  }catch(e){PB.err="Could not load this booking page.";PB.loading=false;render();}
+}
+async function loadParentBookData(){
+  try{
+    PB.classes=await apiGet("aps_classes?location_id=eq."+PB.contact.location_id+"&select=*&active=eq.true");
+    var today=new Date();today.setHours(0,0,0,0);
+    var endD=new Date(today);endD.setDate(today.getDate()+13);
+    PB.signups=await apiGet("aps_signups?location_id=eq."+PB.contact.location_id+"&session_date=gte."+dstr(today)+"&session_date=lte."+dstr(endD)+"&select=*");
+    PB.loading=false;render();
+  }catch(e){PB.err="Could not load the schedule. Try refreshing.";PB.loading=false;render();}
+}
+async function bookParentConfirm(opt){
+  if(opt.left<=0){PB.err="That session just filled up — pick another.";render();return;}
+  try{
+    await apiPost("aps_signups",{location_id:PB.contact.location_id,class_id:opt.class.id,contact_id:PBOOK_ID,session_date:opt.date,status:"booked"});
+    PB.err="";await loadParentBookData();
+  }catch(e){PB.err="Couldn't book that session — you may already be booked.";render();}
+}
+async function cancelParentSession(sid){
+  try{await apiPatch("aps_signups","id=eq."+sid,{status:"cancelled"});PB.err="";await loadParentBookData();}
+  catch(e){PB.err="Couldn't cancel that booking.";render();}
+}
+function buildParentBookView(){
+  var wrap=div("min-height:100vh;display:flex;flex-direction:column;background:#000");
+  var h=div("background:linear-gradient(135deg,#060c1a,#0a1535);border-bottom:1px solid #3a1414;padding:14px 20px;display:flex;align-items:center;gap:12px;flex-shrink:0");
+  var icon=div("width:38px;height:38px;background:linear-gradient(135deg,#1d4ed8,#1e40af);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:19px");icon.textContent="📅";
+  var titles=div("");ap(titles,mk("div","font-size:18px;font-weight:800;color:#f1f5f9","BOOK A SESSION"),mk("div","font-size:10px;color:#f87171;letter-spacing:.08em;text-transform:uppercase;font-weight:600",PB.locationName||"Athlete Performance Score"));
+  ap(h,icon,titles);wrap.appendChild(h);
+  var body=div("flex:1;padding:20px;max-width:520px;margin:0 auto;width:100%;box-sizing:border-box");
+  if(!PB.contact&&PB.loading){ap(body,mk("div","color:#3b82f6;text-align:center;padding-top:60px;font-size:14px;font-weight:700","⚡ Loading..."));wrap.appendChild(body);return wrap;}
+  if(!PB.contact){ap(body,mk("p","color:#64748b;text-align:center;padding-top:80px;font-size:14px",PB.err||"This booking link isn't valid."));wrap.appendChild(body);return wrap;}
+  ap(body,mk("div","font-size:22px;font-weight:800;color:#f1f5f9;margin-bottom:2px","Hi "+(PB.contact.first_name||pipeName(PB.contact).split(" ")[0])+"!"));
+  ap(body,mk("div","color:#94a3b8;font-size:13px;margin-bottom:20px","Pick a session below to reserve your spot."));
+  if(PB.err)ap(body,mk("div","background:rgba(248,113,113,.12);border:1px solid #f87171;color:#f87171;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:16px",PB.err));
+  if(PB.loading){ap(body,mk("div","color:#3b82f6;text-align:center;padding:30px;font-size:13px;font-weight:700","⚡ Loading schedule..."));wrap.appendChild(body);return wrap;}
+  var today=dstr(new Date());
+  var mine=PB.signups.filter(function(s){return s.contact_id===PBOOK_ID&&s.status!=="cancelled"&&s.session_date>=today;}).sort(function(a,b){return a.session_date.localeCompare(b.session_date);});
+  ap(body,mk("div","font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px","Your Upcoming Sessions"));
+  if(mine.length){
+    mine.forEach(function(sg){
+      var cls=null;for(var i=0;i<PB.classes.length;i++)if(PB.classes[i].id===sg.class_id)cls=PB.classes[i];
+      var row=div("display:flex;justify-content:space-between;align-items:center;background:#0b1527;border:1px solid #1a2d50;border-radius:9px;padding:11px 14px;margin-bottom:8px;gap:10px");
+      var main=div("");ap(main,mk("div","font-size:13px;font-weight:700;color:#f1f5f9",sg.session_date+" · "+fmtTime(cls?cls.start_time:"")),mk("div","font-size:12px;color:#94a3b8;margin-top:1px",cls?cls.title:"Class"));
+      ap(row,main);
+      var xb=mk("button","background:transparent;border:1px solid #1a2d50;color:#f87171;border-radius:7px;padding:6px 11px;font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0","Cancel");
+      xb.onclick=(function(sid){return function(){cancelParentSession(sid);};})(sg.id);
+      ap(row,xb);body.appendChild(row);
+    });
+  }else{ap(body,mk("div","color:#475569;font-size:12px;padding:6px 0 4px","No sessions booked yet."));}
+  var avail=div("margin-top:22px");
+  ap(avail,mk("div","font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px","Available Sessions"));
+  var opts=[];var td=new Date();td.setHours(0,0,0,0);
+  for(var i=0;i<14;i++){
+    var d=new Date(td);d.setDate(td.getDate()+i);var dow=d.getDay(),ds=dstr(d);
+    PB.classes.filter(function(c){return c.day_of_week===dow;}).forEach(function(c){opts.push({class:c,date:ds});});
+  }
+  opts.forEach(function(o){
+    var cnt=PB.signups.filter(function(s){return s.class_id===o.class.id&&s.session_date===o.date&&s.status!=="cancelled";}).length;
+    o.count=cnt;o.left=o.class.capacity-cnt;
+  });
+  opts.sort(function(a,b){return(a.date+a.class.start_time).localeCompare(b.date+b.class.start_time);});
+  if(!opts.length)ap(avail,mk("div","color:#475569;font-size:13px;padding:10px 0","No sessions on the schedule right now."));
+  opts.forEach(function(o){
+    var full=o.left<=0;
+    var already=mine.some(function(sg){return sg.class_id===o.class.id&&sg.session_date===o.date;});
+    var row=mk("button","width:100%;text-align:left;background:#0b1527;border:1px solid #1a2d50;border-radius:9px;padding:12px 14px;margin-bottom:8px;cursor:"+((full||already)?"default":"pointer")+";opacity:"+((full||already)?"0.5":"1"));
+    var top=div("display:flex;justify-content:space-between;align-items:center;gap:8px");
+    ap(top,mk("div","font-weight:700;font-size:13px;color:#f1f5f9",o.date+" · "+fmtTime(o.class.start_time)),mk("div","font-size:11px;font-weight:800;color:"+(already?"#60a5fa":full?"#f87171":"#34d399")+";white-space:nowrap",already?"BOOKED":full?"FULL":o.left+" left"));
+    ap(row,top,mk("div","font-size:12px;color:#94a3b8;margin-top:2px",o.class.title+(o.class.coach?" · "+o.class.coach:"")));
+    if(!full&&!already)row.onclick=(function(opt){return function(){bookParentConfirm(opt);};})(o);
+    avail.appendChild(row);
+  });
+  body.appendChild(avail);
+  wrap.appendChild(body);return wrap;
+}
 
 /* ── BOOT ── */
 render();
-if(SHARE_ID!==null){
+if(PBOOK_ID!==null){
+  loadParentBook();
+} else if(SHARE_ID!==null){
   loadShareAthlete();
 } else if(!LOCATION_CODE){
   S.screen="setup";render();
