@@ -1,6 +1,8 @@
 // aps-create-checkout.js
-// Creates a Stripe Checkout session for a program signup
-// POST { locationCode, programId, athleteData: { name, dob, gender, email, phone } }
+// Creates a Stripe Checkout Session for an aps_products row, billed to a contact.
+// Uses the location's connected Stripe account if onboarded, else falls back to
+// the platform's own test account so checkout still works pre-onboarding.
+// POST { productId, contactId }
 
 const Stripe = require("stripe");
 
@@ -9,87 +11,80 @@ const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
 const SB_HEADERS = {
   "apikey": SB_KEY,
   "Authorization": "Bearer " + SB_KEY,
-  "Content-Type": "application/json",
-  "Prefer": "return=representation"
+  "Content-Type": "application/json"
 };
 
-const PLATFORM_FEE_PERCENT = 2;
-
-async function getLocation(code) {
-  const res = await fetch(`${SB_URL}/rest/v1/aps_locations?code=eq.${code}&select=*`, { headers: SB_HEADERS });
-  const rows = await res.json();
-  return rows[0] || null;
+async function sbGet(path) {
+  const r = await fetch(`${SB_URL}/rest/v1/${path}`, { headers: SB_HEADERS });
+  if (!r.ok) throw new Error("Supabase GET failed: " + (await r.text()));
+  return r.json();
 }
 
-async function getProgram(id) {
-  const res = await fetch(`${SB_URL}/rest/v1/aps_products?id=eq.${id}&select=*`, { headers: SB_HEADERS });
-  const rows = await res.json();
-  return rows[0] || null;
-}
-
-exports.handler = async function(event) {
+exports.handler = async function (event) {
   if (event.httpMethod !== "POST") return { statusCode: 405, body: "Method Not Allowed" };
 
   let body;
   try { body = JSON.parse(event.body); } catch { return { statusCode: 400, body: "Invalid JSON" }; }
 
-  const { locationCode, programId, athleteData, leadId } = body;
-  if (!locationCode || !programId || !athleteData?.name) {
-    return { statusCode: 400, body: "locationCode, programId, and athleteData.name required" };
-  }
+  const { productId, contactId } = body;
+  if (!productId || !contactId) return { statusCode: 400, body: "productId and contactId required" };
 
   const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-  const appUrl = event.headers.origin || "https://heroic-kelpie-182180.netlify.app";
 
   try {
-    const [location, program] = await Promise.all([getLocation(locationCode), getProgram(programId)]);
+    const products = await sbGet(`aps_products?id=eq.${productId}&select=*`);
+    if (!products.length) return { statusCode: 404, body: "Product not found" };
+    const product = products[0];
 
-    if (!location) return { statusCode: 404, body: "Location not found" };
-    if (!program) return { statusCode: 404, body: "Program not found" };
-    if (!location.stripe_account_id) return { statusCode: 400, body: "Location has not connected Stripe yet" };
+    const contacts = await sbGet(`aps_contacts?id=eq.${contactId}&select=*`);
+    if (!contacts.length) return { statusCode: 404, body: "Contact not found" };
+    const contact = contacts[0];
 
-    const platformFee = Math.round(program.price_cents * PLATFORM_FEE_PERCENT / 100);
+    const locations = await sbGet(`aps_locations?id=eq.${product.location_id}&select=code,stripe_account_id,stripe_onboarded`);
+    const location = locations[0] || {};
 
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [{
-        price_data: {
-          currency: "usd",
-          product_data: {
-            name: program.name,
-            description: program.description || `${location.name} — ${program.name}`
-          },
-          unit_amount: program.price_cents
-        },
-        quantity: 1
-      }],
-      mode: "payment",
-      success_url: `${appUrl}/signup-success?location=${locationCode}&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${appUrl}/signup?location=${locationCode}`,
-      customer_email: athleteData.email || undefined,
-      payment_intent_data: {
-        application_fee_amount: platformFee,
-        transfer_data: { destination: location.stripe_account_id }
-      },
+    const isRecurring = !!product.billing_interval;
+    const appUrl = event.headers.origin || "https://aps-crm.netlify.app";
+    const contactName = [contact.first_name, contact.last_name].filter(Boolean).join(" ") || "Contact";
+
+    const priceData = {
+      currency: "usd",
+      unit_amount: product.price_cents,
+      product_data: { name: product.name, description: product.description || undefined }
+    };
+    if (isRecurring) priceData.recurring = { interval: product.billing_interval };
+
+    const sessionParams = {
+      mode: isRecurring ? "subscription" : "payment",
+      line_items: [{ price_data: priceData, quantity: 1 }],
+      customer_email: contact.email || undefined,
+      client_reference_id: String(contactId),
+      success_url: `${appUrl}/?location=${location.code || ""}&stripe=success&contact=${contactId}`,
+      cancel_url: `${appUrl}/?location=${location.code || ""}&stripe=cancel&contact=${contactId}`,
       metadata: {
-        locationCode,
-        locationId: String(location.id),
-        programId: String(programId),
-        athleteName: athleteData.name,
-        athleteDob: athleteData.dob || "",
-        athleteGender: athleteData.gender || "",
-        athleteEmail: athleteData.email || "",
-        athletePhone: athleteData.phone || "",
-        leadId: leadId || ""
+        contactId: String(contactId),
+        productId: String(productId),
+        locationId: String(product.location_id),
+        productName: product.name,
+        priceCents: String(product.price_cents),
+        billingInterval: product.billing_interval || "",
+        contactName
       }
-    });
+    };
+    // Subscriptions need the metadata on the subscription itself too, for the webhook.
+    if (isRecurring) sessionParams.subscription_data = { metadata: sessionParams.metadata };
+
+    const useConnected = location.stripe_onboarded && location.stripe_account_id;
+    const session = useConnected
+      ? await stripe.checkout.sessions.create(sessionParams, { stripeAccount: location.stripe_account_id })
+      : await stripe.checkout.sessions.create(sessionParams);
 
     return {
       statusCode: 200,
-      body: JSON.stringify({ url: session.url, sessionId: session.id })
+      body: JSON.stringify({ url: session.url, routedToConnectedAccount: !!useConnected })
     };
   } catch (err) {
-    console.error("Checkout error:", err);
+    console.error("Checkout create error:", err);
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }
 };
